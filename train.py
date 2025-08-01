@@ -46,6 +46,8 @@ def train(args):
 
 
     # --- Setup ----
+    count = len(os.listdir(os.path.join(save_path))) + 1
+    save_path = os.path.join(save_path, f"train_{count}")
     os.makedirs(os.path.join(save_path, "logs"), exist_ok=True)
     os.makedirs(os.path.join(save_path, "weights"), exist_ok=True)
 
@@ -94,8 +96,7 @@ def train(args):
 
 
     # --- TensorBoard ---
-    count = len(os.listdir(save_path)) + 1
-    writer = SummaryWriter(log_dir=os.path.join(save_path, "logs", f"train_{count}"))
+    writer = SummaryWriter(log_dir=os.path.join(save_path, "logs"))
 
     # --- EarlyStopping ---
     best_val_acc = 0.0
