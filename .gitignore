@@ -208,3 +208,6 @@ __marimo__/
 __pycache__
 runs
 images
+app
+*.pth
+*.pt
