@@ -116,10 +116,10 @@ def train(args):
         for imgs, _, labels in tqdm(train_loader, desc=f"[Epoch {epoch}] Train"):
             imgs, labels = imgs.to(device), labels.float().unsqueeze(1).to(device)
 
+            optimizer.zero_grad()
             preds = model(imgs)
             loss = criterion(preds, labels)
 
-            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
