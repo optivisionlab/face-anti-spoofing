@@ -9,7 +9,8 @@ from tqdm import tqdm
 import argparse
 import os
 from dataset import LiveSpoofDataset, LiveSpoofCelebDataset
-from models.DC_CDN import DC_CDN_Classifier
+from models.DC_CDN import DC_CDN_Classifier, DC_CDN
+from losses import Contrast_depth_loss
 
 
 def get_argparse():
@@ -71,11 +72,12 @@ def train(args):
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
     # --- Model ---
-    model = DC_CDN_Classifier(device=device).to(device)
+    model = DC_CDN().to(device)
 
     # --- Loss & Optimizer ---
-    criterion = nn.BCELoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    criterion_absolute_loss = nn.MSELoss().cuda()
+    criterion_contrastive_loss = Contrast_depth_loss().cuda()
+    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=0.00005)
 
     # Bổ sung scheduler cosine annealing
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(

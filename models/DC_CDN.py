@@ -21,7 +21,7 @@ class Conv2d_Hori_Veri_Cross(nn.Module):
 
     def forward(self, x):
         [C_out,C_in,H_k,W_k] = self.conv.weight.shape
-        tensor_zeros = torch.zeros((C_out, C_in, 1), device=self.conv.weight.device)
+        tensor_zeros = torch.FloatTensor(C_out, C_in, 1).fill_(0).to(x.device)
         conv_weight = torch.cat((tensor_zeros, self.conv.weight[:,:,:,0], tensor_zeros, self.conv.weight[:,:,:,1], self.conv.weight[:,:,:,2], self.conv.weight[:,:,:,3], tensor_zeros, self.conv.weight[:,:,:,4], tensor_zeros), 2)
         conv_weight = conv_weight.contiguous().view(C_out, C_in, 3, 3)
         
