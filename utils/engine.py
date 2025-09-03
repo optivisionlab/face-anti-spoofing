@@ -23,7 +23,7 @@ def contrast_depth_conv(input):
     
     kernel_filter = np.array(kernel_filter_list, np.float32)
     
-    kernel_filter = torch.from_numpy(kernel_filter.astype(np.float)).float().cuda()
+    kernel_filter = torch.from_numpy(kernel_filter.astype(np.float32)).float().cuda()
     # weights (in_channel, out_channel, kernel, kernel)
     kernel_filter = kernel_filter.unsqueeze(dim=1)
     

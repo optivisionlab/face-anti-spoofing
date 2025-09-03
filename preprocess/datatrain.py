@@ -7,9 +7,7 @@ import cv2
 import numpy as np
 import random
 import torch
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
-import pdb
+from torch.utils.data import Dataset
 import math
 import os 
 import imgaug.augmenters as iaa
@@ -143,14 +141,14 @@ class ToTensor(object):
         binary_mask = np.array(binary_mask)
 
                         
-        spoofing_label_np = np.array([0],dtype=np.long)
+        spoofing_label_np = np.array([0],dtype=np.longlong)
         spoofing_label_np[0] = spoofing_label
         
         
         return {
-            'image_x': torch.from_numpy(image_x.astype(np.float)).float(), 
-            'binary_mask': torch.from_numpy(binary_mask.astype(np.float)).float(), 
-            'spoofing_label': torch.from_numpy(spoofing_label_np.astype(np.float)).float()
+            'image_x': torch.from_numpy(image_x.astype(np.float32)).float(), 
+            'binary_mask': torch.from_numpy(binary_mask.astype(np.float32)).float(), 
+            'spoofing_label': torch.from_numpy(spoofing_label_np.astype(np.float32)).float()
         }
 
 
