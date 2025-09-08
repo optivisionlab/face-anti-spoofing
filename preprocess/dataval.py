@@ -40,7 +40,7 @@ class ToTensor_valtest(object):
                         
         binary_mask = np.array(binary_mask)
         
-        return {'image_x': torch.from_numpy(image_x.astype(np.float)).float(), 'binary_mask': torch.from_numpy(binary_mask.astype(np.float)).float(), 'string_name': string_name} 
+        return {'image_x': torch.from_numpy(image_x.astype(np.float32)).float(), 'binary_mask': torch.from_numpy(binary_mask.astype(np.float)).float(), 'string_name': string_name} 
 
 
 class Spoofing_valtest(Dataset):
