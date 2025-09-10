@@ -3,49 +3,18 @@ import torch
 import pandas as pd
 import cv2
 import numpy as np
-import torch
 from torch.utils.data import Dataset
-import os 
-import imgaug.augmenters as iaa
 import random
+import imgaug.augmenters as iaa
+
 
 frames_total = 8    # each video 8 uniform samples
+
 # data augment from 'imgaug' --> Add (value=(-40,40), per_channel=True), GammaContrast (gamma=(0.5,1.5))
 seq = iaa.Sequential([
     iaa.Add(value=(-40, 40), per_channel=True), # Add color 
     iaa.GammaContrast(gamma=(0.5, 1.5)) # GammaContrast with a gamma of 0.5 to 1.5
 ])
-
-class Normaliztion_valtest(object):
-    """
-        same as mxnet, normalize into [-1, 1]
-        image = (image - 127.5)/128
-    """
-    def __call__(self, sample):
-        image_x, binary_mask, string_name = sample['image_x'],sample['binary_mask'],sample['string_name']
-        new_image_x = (image_x - 127.5)/128     # [-1,1]
-        
-        return {'image_x': new_image_x, 'binary_mask': binary_mask, 'string_name': string_name}
-
-
-class ToTensor_valtest(object):
-    """
-        Convert ndarrays in sample to Tensors.
-        process only one batch every time
-    """
-
-    def __call__(self, sample):
-        image_x, binary_mask, string_name = sample['image_x'], sample['binary_mask'], sample['string_name']
-        
-        # swap color axis because    BGR2RGB
-        # numpy image: (batch_size) x T x H x W x C
-        # torch image: (batch_size) x T x C X H X W
-        image_x = image_x[:,:,:,::-1].transpose((0, 3, 1, 2))
-        image_x = np.array(image_x)
-                        
-        binary_mask = np.array(binary_mask)
-        
-        return {'image_x': torch.from_numpy(image_x.astype(np.float32)).float(), 'binary_mask': torch.from_numpy(binary_mask.astype(np.float)).float(), 'string_name': string_name} 
 
 
 class Spoofing_valtest(Dataset):
