@@ -114,16 +114,21 @@ def validate_batch_images(epoch, model, dataloader_val, loss_absolute_val, loss_
 # main function
 def train_test(dir_root, file_train_csv_path, file_val_csv_path, args):
 
-    isExists = os.path.exists(args.log)
-    if not isExists:
-        os.makedirs(os.path.join(args.log, "logs"), exist_ok=True)
+    os.makedirs(os.path.join(args.log), exist_ok=True)
+    count = len(os.listdir(os.path.join(args.log))) + 1
+    logs_save = os.path.join(args.log, f"train{count}", "logs")
+    weights_save = os.path.join(args.log, f"train{count}", "weights")
+    os.makedirs(logs_save, exist_ok=True)
+    os.makedirs(weights_save, exist_ok=True)
     
     # --- Device ---
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")    
-    
     echo_batches = args.echo_batches
-    # --- TensorBoard ---
-    writer = SummaryWriter(log_dir=os.path.join(args.log, "logs"))
+    
+    # --- Save TensorBoard & Weights ---
+    writer = SummaryWriter(log_dir=logs_save)
+    best_checkpoint_path = os.path.join(weights_save, "best_weight.pt")
+    last_checkpoint_path = os.path.join(weights_save, "last_weight.pt")
     
     print("==============START==============")
 
@@ -178,10 +183,16 @@ def train_test(dir_root, file_train_csv_path, file_val_csv_path, args):
     criterion_contrastive_loss = Contrast_depth_loss().to(device)
     
     ACER_save = 1.0
+    epochs_no_improve = 0
+    early_stop = False
     print("==============SETUP TRAIN DONE==============")
     
     print("==============START TRAIN==============")
     for epoch in range(args.epochs):  # loop over the dataset multiple times
+        if early_stop:
+            print("⏹️ Early stopping triggered.")
+            break
+        
         if (epoch + 1) % args.step_size == 0:
             lr *= args.gamma
         
@@ -189,17 +200,19 @@ def train_test(dir_root, file_train_csv_path, file_val_csv_path, args):
         loss_contra_train =  AvgrageMeter()
         loss_absolute_val = AvgrageMeter()
         loss_contra_val =  AvgrageMeter()
-        lst_train_map_score = []
         model.train()
         
         for i, sample_batched in tqdm(enumerate(dataloader_train), desc=f"[Epoch {epoch + 1}] Train"):
-
-            map_score, spoof_label, loss, loss_absolute, loss_contra = process_on_batch(model=model, sample_batched=sample_batched, 
-                                                                                                     loss_absolute=loss_absolute_train, loss_contra=loss_contra_train, 
-                                                                                                     criterion_absolute_loss=criterion_absolute_loss, 
-                                                                                                     criterion_contrastive_loss=criterion_contrastive_loss,
-                                                                                                     optimizer=optimizer,
-                                                                                                     device=device)
+            map_score, spoof_label, loss, loss_absolute, loss_contra = process_on_batch(
+                model=model, 
+                sample_batched=sample_batched, 
+                loss_absolute=loss_absolute_train, loss_contra=loss_contra_train, 
+                criterion_absolute_loss=criterion_absolute_loss, 
+                criterion_contrastive_loss=criterion_contrastive_loss,
+                optimizer=optimizer,
+                device=device
+            )
+            
             loss.backward()
             optimizer.step()
               
@@ -212,15 +225,46 @@ def train_test(dir_root, file_train_csv_path, file_val_csv_path, args):
         train_ACC, train_APCER, train_BPCER, train_ACER = performances_score_val(map_score_val=zip(map_score, spoof_label)) # performances train
         
         # VAL DATA
-        
-        map_score, spoof_label, val_loss_absolute_avg, val_loss_contra_avg = validate_batch_images(epoch + 1, model, dataloader_val, 
-                                                                                              loss_absolute_val=loss_absolute_val, loss_contra_val=loss_contra_val, 
-                                                                                              criterion_absolute_loss=criterion_absolute_loss, 
-                                                                                              criterion_contrastive_loss=criterion_contrastive_loss, 
-                                                                                              optimizer=optimizer,
-                                                                                              device=device)
+        map_score, spoof_label, val_loss_absolute_avg, val_loss_contra_avg = validate_batch_images(
+            epoch + 1, model, dataloader_val, 
+            loss_absolute_val=loss_absolute_val, loss_contra_val=loss_contra_val, 
+            criterion_absolute_loss=criterion_absolute_loss, 
+            criterion_contrastive_loss=criterion_contrastive_loss, 
+            optimizer=optimizer,
+            device=device
+        )
         
         val_ACC, val_APCER, val_BPCER, val_ACER = performances_score_val(map_score_val=zip(map_score, spoof_label)) # performances val
+        
+        # save best weight
+        if val_ACER < ACER_save:
+            ACER_save = val_ACER
+            torch.save(model.state_dict(), best_checkpoint_path)
+            print(f"✅ Best model saved (Val Acc: {ACER_save:.4f}%)")
+        else:
+            epochs_no_improve += 1
+            print(f"⏳ No improvement ({epochs_no_improve}/{args.patience})")
+            if epochs_no_improve >= args.patience:
+                early_stop = True
+                print("⛔ Early stopping reached patience.")
+        
+        # save last weight
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'train_ACC': train_ACC,
+            'train_APCER': train_APCER,
+            'train_BPCER': train_BPCER,
+            'train_ACER': train_ACER,
+            'val_ACC': val_ACC,
+            'val_APCER': val_APCER, 
+            'val_BPCER': val_BPCER, 
+            'val_ACER': val_ACER,
+            'epochs_no_improve': epochs_no_improve
+        }, last_checkpoint_path)
+        print("💾 Last checkpoint saved.")
         
         # scheduler
         scheduler.step()
@@ -275,6 +319,7 @@ if __name__ == "__main__":
     parser.add_argument('--train_csv', type=str, default="CelebA_Spoof/metas/intra_test/train_label.txt")
     parser.add_argument('--val_csv', type=str, default="CelebA_Spoof_/CelebA_Spoof/metas/intra_test/test_label.txt")
     parser.add_argument('--root_dir', type=str, default="celeba-spoof/CelebA_Spoof_/CelebA_Spoof", help='Root directory of dataset')
+    parser.add_argument('--patience', type=int, default=5)
     
     args = parser.parse_args()
     
