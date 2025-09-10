@@ -528,13 +528,15 @@ def performances_score_val(map_score_val):
         else:
             num_fake += 1
     
+    # print("val_labels : ", val_labels)
+    # print("val_scores : ", val_scores)
     fpr, tpr, threshold = roc_curve(val_labels, val_scores, pos_label=1)
     val_err, val_threshold = get_err_threhold(fpr, tpr, threshold)
     
     type1 = len([s for s in data if s['map_score'] <= val_threshold and s['label'] == 1])
     type2 = len([s for s in data if s['map_score'] > val_threshold and s['label'] == 0])
     
-    val_ACC = 1 - (type1 + type2) / len(map_score_val)
+    val_ACC = 1 - (type1 + type2) / len(val_labels)
     val_APCER = type2 / num_fake
     val_BPCER = type1 / num_real
     val_ACER = (val_APCER + val_BPCER) / 2.0

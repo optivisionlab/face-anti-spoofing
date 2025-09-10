@@ -4,8 +4,8 @@ import numpy as np
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from models.CDCN import Conv2d_cd, CDCNpp
-from preprocess.datatrain import Normaliztion, ToTensor, RandomHorizontalFlip, Cutout, RandomErasing, FaceAntiSpoofing_TrainDataset
-from preprocess.dataval import Normaliztion_valtest, ToTensor_valtest, FaceAntiSpoofing_ValDataset
+from preprocess.datatrain import FaceAntiSpoofing_TrainDataset
+from preprocess.dataval import FaceAntiSpoofing_ValDataset
 import torch.nn.functional as F
 import torch.nn as nn
 import torch.optim as optim
@@ -13,6 +13,7 @@ from utils.utils import AvgrageMeter, performances_score_val
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import pandas as pd
+from preprocess.transforms import Normaliztion, ToTensor, RandomHorizontalFlip, Cutout, RandomErasing
 
 
 def contrast_depth_conv(input):
@@ -71,7 +72,6 @@ class Contrast_depth_loss(nn.Module):    # Pearson range [-1, 1] so if < 0, abs|
 
 def process_on_batch(model, sample_batched, loss_absolute=None, loss_contra=None, optimizer=None, criterion_absolute_loss=None, criterion_contrastive_loss=None, device='cpu'):
     
-    print("sample_batched: ", sample_batched.keys())
     inputs = sample_batched['image_x'].to(device)          # [B, C, H, W]
     # string_name = sample_batched['string_name']        # list tên ảnh
     spoof_label = sample_batched['spoofing_label'].to(device)
@@ -87,36 +87,28 @@ def process_on_batch(model, sample_batched, loss_absolute=None, loss_contra=None
     loss_absolute.update(absolute_loss.data, n)
     loss_contra.update(contrastive_loss.data, n)
     
-    map_score = 0.0
-    for frame_t in range(inputs.shape[1]):
-        map_x, _, _, _, _, _ =  model(inputs[:, frame_t, :, :, :]) # map_x, embedding, x_Block1, x_Block2, x_Block3, x_input
-        score_norm = torch.sum(map_x)/torch.sum(binary_mask[:, frame_t, :, :])
-        map_score += score_norm
-    map_score = map_score/inputs.shape[1]
-    
-    if map_score > 1:
-        map_score = 1.0
-        
-    return map_score, spoof_label, loss, loss_absolute, loss_contra
+    sum_map = map_x.sum(dim=(1, 2))  # shape: (32,)
+    sum_mask = binary_mask.sum(dim=(1, 2)) # shape: (32,)
+    sum_mask = torch.clamp(sum_mask, min=1) # # tránh chia cho 0
+    map_score = sum_map / sum_mask
+    map_score = torch.clamp(map_score, max=1.0) # nếu score > 1 thì set = 1
+
+    return map_score.cpu().detach().numpy(), spoof_label.squeeze(1).cpu().detach().numpy(), loss, loss_absolute, loss_contra
 
 
-def validate_batch_images(epoch, model, dataloader_val, loss_absolute_val, loss_contra_val, criterion_absolute_loss, criterion_contrastive_loss, optimizer=None):
-    model.eval()
-    map_score_list = []
-    
+def validate_batch_images(epoch, model, dataloader_val, loss_absolute_val, loss_contra_val, criterion_absolute_loss, criterion_contrastive_loss, optimizer=None, device='cpu'):
+    model.eval()    
     with torch.no_grad():
         for i, sample_batched in tqdm(enumerate(dataloader_val), desc=f"[Epoch {epoch}] Val"):
             # Lấy batch input và mask
             
-            map_score, spoof_label, loss, loss_absolute, loss_contra = process_on_batch(model=model, sample_batched=sample_batched, 
+            map_score, spoof_label, _, loss_absolute, loss_contra = process_on_batch(model=model, sample_batched=sample_batched, 
                                                                                                      loss_absolute=loss_absolute_val, loss_contra=loss_contra_val, 
                                                                                                      criterion_absolute_loss=criterion_absolute_loss, 
                                                                                                      criterion_contrastive_loss=criterion_contrastive_loss,
-                                                                                                     optimizer=optimizer)
-            
-            map_score_list.append([map_score, spoof_label[0][0]])
-            
-    return map_score_list, loss_absolute.avg, loss_contra.avg
+                                                                                                     optimizer=optimizer,
+                                                                                                     device=device)            
+    return map_score, spoof_label, loss_absolute.avg, loss_contra.avg
 
 
 # main function
@@ -148,7 +140,7 @@ def train_test(dir_root, file_train_csv_path, file_val_csv_path, args):
         transform=transforms.Compose([RandomErasing(), RandomHorizontalFlip(), ToTensor(), Cutout(), Normaliztion()])
     )
     
-    dataloader_train = DataLoader(train_data, batch_size=args.batchsize, shuffle=True, num_workers=4)
+    dataloader_train = DataLoader(train_data, batch_size=args.batchsize, shuffle=True, num_workers=args.num_worker)
     
     # load val data
     val_data = FaceAntiSpoofing_ValDataset(
@@ -156,10 +148,10 @@ def train_test(dir_root, file_train_csv_path, file_val_csv_path, args):
         base_dir=dir_root,
         resize=(256, 256),
         size_mask=(32, 32),
-        transform=transforms.Compose([Normaliztion_valtest(), ToTensor_valtest()])
+        transform=transforms.Compose([Normaliztion(), ToTensor()])
     )
             
-    dataloader_val = DataLoader(val_data, batch_size=args.batchsize, shuffle=False, num_workers=4)
+    dataloader_val = DataLoader(val_data, batch_size=args.batchsize, shuffle=False, num_workers=args.num_worker)
     
     print("==============LOAD DATASET DONE==============")
     
@@ -190,8 +182,6 @@ def train_test(dir_root, file_train_csv_path, file_val_csv_path, args):
     
     print("==============START TRAIN==============")
     for epoch in range(args.epochs):  # loop over the dataset multiple times
-        
-        print(f">>>>>>> Epoch {epoch + 1} <<<<<<<<")
         if (epoch + 1) % args.step_size == 0:
             lr *= args.gamma
         
@@ -208,8 +198,8 @@ def train_test(dir_root, file_train_csv_path, file_val_csv_path, args):
                                                                                                      loss_absolute=loss_absolute_train, loss_contra=loss_contra_train, 
                                                                                                      criterion_absolute_loss=criterion_absolute_loss, 
                                                                                                      criterion_contrastive_loss=criterion_contrastive_loss,
-                                                                                                     optimizer=optimizer)
-            lst_train_map_score.append([map_score, spoof_label])
+                                                                                                     optimizer=optimizer,
+                                                                                                     device=device)
             loss.backward()
             optimizer.step()
               
@@ -219,17 +209,18 @@ def train_test(dir_root, file_train_csv_path, file_val_csv_path, args):
                 print('epoch:%d, mini-batch:%3d, lr=%f, Absolute_Depth_loss= %.4f, Contrastive_Depth_loss= %.4f, Total Loss= %.4f \n' % 
                       (epoch + 1, i + 1, lr,  loss_absolute.avg, loss_contra.avg, (loss_absolute.avg + loss_contra.avg)))
         
-        train_ACC, train_APCER, train_BPCER, train_ACER = performances_score_val(map_score_val=lst_train_map_score) # performances train
+        train_ACC, train_APCER, train_BPCER, train_ACER = performances_score_val(map_score_val=zip(map_score, spoof_label)) # performances train
         
         # VAL DATA
         
-        lst_val_map_score, val_loss_absolute_avg, val_loss_contra_avg = validate_batch_images(epoch + 1, model, dataloader_val, 
+        map_score, spoof_label, val_loss_absolute_avg, val_loss_contra_avg = validate_batch_images(epoch + 1, model, dataloader_val, 
                                                                                               loss_absolute_val=loss_absolute_val, loss_contra_val=loss_contra_val, 
                                                                                               criterion_absolute_loss=criterion_absolute_loss, 
                                                                                               criterion_contrastive_loss=criterion_contrastive_loss, 
-                                                                                              optimizer=optimizer)
+                                                                                              optimizer=optimizer,
+                                                                                              device=device)
         
-        val_ACC, val_APCER, val_BPCER, val_ACER = performances_score_val(map_score_val=lst_val_map_score) # performances val
+        val_ACC, val_APCER, val_BPCER, val_ACER = performances_score_val(map_score_val=zip(map_score, spoof_label)) # performances val
         
         # scheduler
         scheduler.step()
@@ -270,7 +261,7 @@ def train_test(dir_root, file_train_csv_path, file_val_csv_path, args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="save quality using landmarkpose model")
-    parser.add_argument('--gpu', type=int, default=0, help='the gpu id used for predict')
+    parser.add_argument('--num_worker', type=int, default=2, help='number of worker')
     parser.add_argument('--lr', type=float, default=0.0001, help='initial learning rate')  # default=0.0001
     parser.add_argument('--weight_decay', type=float, default=0.00005, help='initial weight decay')  # default=0.0001
     parser.add_argument('--step_size', type=int, default=20, help='how many epochs lr decays once')  # 500  | DPC = 400
