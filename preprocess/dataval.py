@@ -219,7 +219,12 @@ class FaceAntiSpoofing_ValDataset(Dataset):
             spoofing_label = 0            # fake
             binary_mask = np.zeros(self.size_mask) 
         
-        sample = {'image_x': image_x, 'binary_mask': binary_mask, 'spoofing_label': spoofing_label, 'string_name': img_path}
+        sample = {
+            'image_x': image_x, 
+            'binary_mask': binary_mask, 
+            'spoofing_label': spoofing_label, 
+            # 'string_name': img_path
+        }
         
         if self.transform:
             sample = self.transform(sample)
