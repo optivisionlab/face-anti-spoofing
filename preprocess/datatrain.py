@@ -169,7 +169,7 @@ class FaceAntiSpoofing_TrainDataset(Dataset):
             else:
                 frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
                 if frame_count > 0:
-                    random_frame_index = random.randint(0, frame_count - 1) # chọn ngẫu nhiên 1 frame
+                    random_frame_index = random.randint(5, frame_count - 5) # chọn ngẫu nhiên 1 frame
                     cap.set(cv2.CAP_PROP_POS_FRAMES, random_frame_index) # chọn ngẫu nhiên 1 frame
                     ret, frame = cap.read()
                     if ret:
