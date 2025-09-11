@@ -528,8 +528,6 @@ def performances_score_val(map_score_val):
         else:
             num_fake += 1
     
-    # print("val_labels : ", val_labels)
-    # print("val_scores : ", val_scores)
     fpr, tpr, threshold = roc_curve(val_labels, val_scores, pos_label=1)
     val_err, val_threshold = get_err_threhold(fpr, tpr, threshold)
     
