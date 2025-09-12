@@ -135,7 +135,9 @@ def validate_on_epoch(epoch, model, dataloader_val, criterion_absolute_loss, cri
 def trainining_on_epoch(epoch, model, dataloader_train, criterion_absolute_loss, criterion_contrastive_loss, optimizer, device='cpu'):
     loss_absolute_train = AvgrageMeter()
     loss_contra_train =  AvgrageMeter()
-
+    
+    model.train()
+        
     # avg_train_ACC, avg_train_APCER, avg_train_BPCER, avg_train_ACER, avg_train_loss_absolute, avg_train_loss_contra = [], [], [], [], [], []
     avg_train_loss_absolute, avg_train_loss_contra = [], []
     score_pred, score_truth = np.array([]), np.array([])
@@ -151,6 +153,9 @@ def trainining_on_epoch(epoch, model, dataloader_train, criterion_absolute_loss,
             device=device
         )
         
+        loss.backward()
+        optimizer.step()
+        
         score_pred = np.concatenate((score_pred, map_score))
         score_truth = np.concatenate((score_truth, spoof_label))
         avg_train_loss_absolute.append(loss_absolute.avg.cpu().detach().numpy())
@@ -165,7 +170,7 @@ def trainining_on_epoch(epoch, model, dataloader_train, criterion_absolute_loss,
         'avg_train_BPCER': np.mean(avg_train_BPCER),
         'avg_train_ACER': np.mean(avg_train_ACER)
     }
-    return train_metrics, model, loss, optimizer
+    return train_metrics
 
 # main function
 def train_model(dir_root, file_train_csv_path, file_val_csv_path, args):
@@ -182,7 +187,6 @@ def train_model(dir_root, file_train_csv_path, file_val_csv_path, args):
     
     # --- Device ---
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")    
-    echo_batches = args.echo_batches
     
     # --- Save TensorBoard & Weights ---
     writer = SummaryWriter(log_dir=logs_save)
@@ -227,7 +231,7 @@ def train_model(dir_root, file_train_csv_path, file_val_csv_path, args):
 
     else:
         # build new model
-        model = CDCNpp( basic_conv=Conv2d_cd, theta=args.theta)
+        model = CDCNpp(basic_conv=Conv2d_cd, theta=args.theta)
         model = model.to(device)
 
         lr = args.lr
@@ -255,9 +259,9 @@ def train_model(dir_root, file_train_csv_path, file_val_csv_path, args):
         if (epoch + 1) % args.step_size == 0:
             lr *= args.gamma
         
-        model.train()
         
-        train_metrics, model, loss, optimizer = trainining_on_epoch(
+        
+        train_metrics = trainining_on_epoch(
             epoch=epoch, 
             model=model, 
             dataloader_train=dataloader_train, 
@@ -266,9 +270,6 @@ def train_model(dir_root, file_train_csv_path, file_val_csv_path, args):
             optimizer=optimizer,
             device=device, 
         )
-        
-        loss.backward()
-        optimizer.step()
         
         # VAL DATA
         vail_metrics = validate_on_epoch(
@@ -285,7 +286,7 @@ def train_model(dir_root, file_train_csv_path, file_val_csv_path, args):
         if vail_metrics['avg_val_ACER'] < ACER_save:
             ACER_save = vail_metrics['avg_val_ACER']
             torch.save(model.state_dict(), best_checkpoint_path)
-            print(f"✅ Best model saved (Val Acc: {ACER_save:.4f}%)")
+            print(f"✅ Best model saved (Val Acc: {ACER_save:.4f}%) to {best_checkpoint_path}")
         else:
             epochs_no_improve += 1
             print(f"⏳ No improvement ({epochs_no_improve}/{args.patience})")
@@ -303,7 +304,8 @@ def train_model(dir_root, file_train_csv_path, file_val_csv_path, args):
             'val_ACER': vail_metrics['avg_val_ACER'],
             'epochs_no_improve': epochs_no_improve
         }, last_checkpoint_path)
-        print("💾 Last checkpoint saved.")
+        print(f"💾 Last checkpoint saved to {last_checkpoint_path}")
+        
         
         # scheduler
         scheduler.step()
