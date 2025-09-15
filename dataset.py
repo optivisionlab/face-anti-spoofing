@@ -36,7 +36,7 @@ class LiveSpoofCelebDataset(Dataset):
         self.samples = []
         self.transform = transform
         
-        df = pd.read_csv(df_csv_path, sep=" ", header=None)
+        df = pd.read_csv(df_csv_path, sep=",", usecols=['path', 'label'])
         
         # live → label 0, spoof → label 1
         for _, (path, label) in tqdm(enumerate(df.values), desc=f"Load Dataset {name} : "):

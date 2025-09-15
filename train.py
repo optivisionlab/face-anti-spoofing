@@ -10,6 +10,10 @@ import argparse
 import os
 from dataset import LiveSpoofDataset, LiveSpoofCelebDataset
 from models.DC_CDN import DC_CDN_Classifier
+from preprocess.datatrain import FaceAntiSpoofing_TrainDataset
+from preprocess.dataval import FaceAntiSpoofing_ValDataset
+from preprocess.transforms import Normaliztion, ToTensor, RandomHorizontalFlip, Cutout, RandomErasing
+import pandas as pd
 
 
 def get_argparse():
@@ -20,7 +24,7 @@ def get_argparse():
     parser.add_argument('--root_dir', type=str, default="/data02/manhquang/dataset/celeba-spoof/CelebA_Spoof_/CelebA_Spoof", help='Root directory of dataset')
 
     parser.add_argument('--batch_size', type=int, default=4)
-    parser.add_argument('--num_epochs', type=int, default=10)
+    parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--patience', type=int, default=5)
     parser.add_argument('--lr', type=float, default=1e-4)
 
@@ -37,7 +41,7 @@ def train(args):
     root_dir = args.root_dir
 
     batch_size = args.batch_size
-    num_epochs = args.num_epochs
+    num_epochs = args.epochs
     patience = args.patience
     lr = args.lr
 
@@ -46,6 +50,7 @@ def train(args):
 
 
     # --- Setup ----
+    os.makedirs(save_path, exist_ok=True)
     count = len(os.listdir(os.path.join(save_path))) + 1
     save_path = os.path.join(save_path, f"train_{count}")
     os.makedirs(os.path.join(save_path, "logs"), exist_ok=True)
