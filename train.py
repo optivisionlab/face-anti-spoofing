@@ -8,11 +8,10 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import argparse
 import os
-from dataset import LiveSpoofDataset, LiveSpoofCelebDataset
+from preprocess.dataset import LiveSpoofCelebDataset, FAS_BCE_Dataset
 from models.DC_CDN import DC_CDN_Classifier
-from preprocess.datatrain import FaceAntiSpoofing_TrainDataset
-from preprocess.dataval import FaceAntiSpoofing_ValDataset
-from preprocess.transforms import Normaliztion, ToTensor, RandomHorizontalFlip, Cutout, RandomErasing
+from losses.focal_loss import FocalLoss
+from preprocess import transformsv2 as Tv2
 import pandas as pd
 
 
@@ -31,6 +30,7 @@ def get_argparse():
     parser.add_argument('--save_path', type=str, default="runs/dc_cdn")
     parser.add_argument('--resume', action='store_true', help='Resume training from last checkpoint')
 
+    parser.add_argument('--input_size', type=int, default=256)
     args = parser.parse_args()
     return args
 
@@ -63,14 +63,36 @@ def train(args):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     # --- Dataset ---
-    transform = transforms.Compose([
-        transforms.Resize((256, 256)),
-        transforms.ToTensor()
+    train_transform = Tv2.Compose([
+        Tv2.Resize((args.input_size, args.input_size)),
+        Tv2.RandomHorizontalFlip(p=0.5),
+        # Tv2.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4),
+        Tv2.RandomResizedCrop(size=args.input_size, scale=(0.75, 1.0), ratio=(3.0/4.0, 4.0/3.0)),
+        # transforms.RandomAffine(10, translate=(0.1, 0.1)),   # affine transform (xoay, dịch)
+        Tv2.ColorTrans(mode=0), # BGR to RGB
+        Tv2.ToTensor(),
+        Tv2.Normalize(
+            mean=[0.485, 0.456, 0.406],    # chuẩn hóa (ImageNet mean/std)
+            std=[0.229, 0.224, 0.225]
+        ),
+    ])
+    
+    test_transform = Tv2.Compose([
+        Tv2.Resize((args.input_size, args.input_size)),
+        Tv2.CenterCrop(args.input_size),
+        Tv2.ColorTrans(mode=0), # BGR to RGB
+        Tv2.ToTensor(),
+        Tv2.Normalize(
+            mean=[0.485, 0.456, 0.406],    # chuẩn hóa (ImageNet mean/std)
+            std=[0.229, 0.224, 0.225]
+        ),
     ])
 
+    train_df = pd.read_csv(train_csv, usecols=['path', 'label'])
+    val_df = pd.read_csv(val_csv, usecols=['path', 'label'])
 
-    train_dataset = LiveSpoofCelebDataset(df_csv_path=train_csv, root_dir=root_dir, transform=transform, name='Celeb Train')
-    val_dataset = LiveSpoofCelebDataset(df_csv_path=val_csv, root_dir=root_dir, transform=transform, name='Celeb Val')
+    train_dataset = FAS_BCE_Dataset(dataframe=train_df, base_dir=root_dir, transform=train_transform)
+    val_dataset = FAS_BCE_Dataset(dataframe=val_df, base_dir=root_dir, transform=test_transform)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
@@ -79,7 +101,8 @@ def train(args):
     model = DC_CDN_Classifier(device=device).to(device)
 
     # --- Loss & Optimizer ---
-    criterion = nn.BCELoss()
+    # criterion = nn.BCELoss()
+    criterion = FocalLoss(gamma=2, alpha=0.2, task_type='binary')
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
     # Bổ sung scheduler cosine annealing
@@ -118,7 +141,7 @@ def train(args):
         model.train()
         train_loss, train_correct, train_total = 0.0, 0, 0
 
-        for imgs, _, labels in tqdm(train_loader, desc=f"[Epoch {epoch}] Train"):
+        for imgs, labels in tqdm(train_loader, desc=f"[Epoch {epoch}] Train"):
             imgs, labels = imgs.to(device), labels.float().unsqueeze(1).to(device)
 
             optimizer.zero_grad()
@@ -141,7 +164,7 @@ def train(args):
         val_loss, val_correct, val_total = 0.0, 0, 0
 
         with torch.no_grad():
-            for imgs, _, labels in tqdm(val_loader, desc=f"[Epoch {epoch}] Val"):
+            for imgs, labels in tqdm(val_loader, desc=f"[Epoch {epoch}] Val"):
                 imgs, labels = imgs.to(device), labels.float().unsqueeze(1).to(device)
 
                 preds = model(imgs)
