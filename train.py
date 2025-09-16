@@ -94,8 +94,8 @@ def train(args):
     train_dataset = FAS_BCE_Dataset(dataframe=train_df, base_dir=root_dir, transform=train_transform)
     val_dataset = FAS_BCE_Dataset(dataframe=val_df, base_dir=root_dir, transform=test_transform)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=16)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
 
     # --- Model ---
     model = DC_CDN_Classifier(device=device).to(device)

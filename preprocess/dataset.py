@@ -74,7 +74,7 @@ class FAS_BCE_Dataset(Dataset):
             idx = idx.tolist()
 
         img_path = os.path.join(self.base_dir, self.dataframe.iloc[idx, 0])
-        
+        image = None
         _, file_extension = os.path.splitext(img_path)
         file_extension = file_extension.lower()
 
@@ -82,7 +82,7 @@ class FAS_BCE_Dataset(Dataset):
             
             # Load image
             frame = cv2.imread(img_path)
-            if image is not None:
+            if frame is not None:
                 image = frame.copy()
             else:
                 print(f"Error: Could not read image file {img_path}")
@@ -115,7 +115,12 @@ class FAS_BCE_Dataset(Dataset):
         
         if label == 0 and self.is_train:
             prob_value = random.random()
-            if prob_value < 0.1:
+            
+            if prob_value < 0.3:
+                label = 1
+                image = self.moire(image)
+                
+            elif prob_value >= 0.3 and prob_value < 0.6:
                 label = 1
                 color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4)
                 image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)      
