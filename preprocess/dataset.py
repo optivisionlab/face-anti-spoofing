@@ -6,7 +6,7 @@ import pandas as pd
 from tqdm import tqdm
 import cv2, random
 from preprocess.moire import Moire
-from preprocess import transformsv2 as Tv2
+from torchvision import transforms
 import numpy as np
 
 
@@ -117,7 +117,7 @@ class FAS_BCE_Dataset(Dataset):
             prob_value = random.random()
             if prob_value < 0.1:
                 label = 1
-                color_jitter = Tv2.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4)
+                color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4)
                 image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)      
                 image_pil = Image.fromarray(image_rgb)
                 transformed_image_pil = color_jitter(image_pil)
