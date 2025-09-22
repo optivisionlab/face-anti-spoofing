@@ -96,84 +96,23 @@ def process_on_batch(model, sample_batched, loss_absolute=None, loss_contra=None
     return map_score.cpu().detach().numpy(), spoof_label.squeeze(1).cpu().detach().numpy(), loss, loss_absolute, loss_contra
 
 
-def validate_on_epoch(epoch, model, dataloader_val, criterion_absolute_loss, criterion_contrastive_loss, optimizer=None, device='cpu'):
-    loss_absolute_val = AvgrageMeter()
-    loss_contra_val =  AvgrageMeter()
-    
-    model.eval()
-    # avg_val_ACC, avg_val_APCER, avg_val_BPCER, avg_val_ACER, avg_val_loss_absolute, avg_val_loss_contra = [], [], [], [], [], []
-    avg_val_loss_absolute, avg_val_loss_contra = [], []
-    score_pred, score_truth = np.array([]), np.array([])
-    
+def validate_batch_images(epoch, model, dataloader_val, loss_absolute_val, loss_contra_val, criterion_absolute_loss, criterion_contrastive_loss, optimizer=None, device='cpu'):
+    model.eval()    
     with torch.no_grad():
-        for sample_batched in tqdm(dataloader_val, desc=f"[Epoch {epoch + 1}] Val"):
+        for i, sample_batched in tqdm(enumerate(dataloader_val), desc=f"[Epoch {epoch}] Val"):
             # Lấy batch input và mask
-            map_score, spoof_label, _, loss_absolute, loss_contra = process_on_batch(
-                model=model, sample_batched=sample_batched, 
-                loss_absolute=loss_absolute_val, loss_contra=loss_contra_val, 
-                criterion_absolute_loss=criterion_absolute_loss, 
-                criterion_contrastive_loss=criterion_contrastive_loss,
-                optimizer=optimizer,
-                device=device
-            )
-            avg_val_loss_absolute.append(loss_absolute.avg.cpu().detach().numpy())
-            avg_val_loss_contra.append(loss_contra.avg.cpu().detach().numpy())
-            score_pred = np.concatenate((score_pred, map_score))
-            score_truth = np.concatenate((score_truth, spoof_label))
-    
-    avg_val_ACC, avg_val_APCER, avg_val_BPCER, avg_val_ACER = performances_score_val(map_score_val=zip(score_pred, score_truth)) # performances val                    
-    return {
-        'avg_val_loss_absolute': np.mean(avg_val_loss_absolute),
-        'avg_val_loss_contra': np.mean(avg_val_loss_contra),
-        'avg_val_ACC': np.mean(avg_val_ACC),
-        'avg_val_APCER': np.mean(avg_val_APCER),
-        'avg_val_BPCER': np.mean(avg_val_BPCER),
-        'avg_val_ACER': np.mean(avg_val_ACER)
-    }
+            
+            map_score, spoof_label, _, loss_absolute, loss_contra = process_on_batch(model=model, sample_batched=sample_batched, 
+                                                                                                     loss_absolute=loss_absolute_val, loss_contra=loss_contra_val, 
+                                                                                                     criterion_absolute_loss=criterion_absolute_loss, 
+                                                                                                     criterion_contrastive_loss=criterion_contrastive_loss,
+                                                                                                     optimizer=optimizer,
+                                                                                                     device=device)            
+    return map_score, spoof_label, loss_absolute.avg, loss_contra.avg
 
-
-def trainining_on_epoch(epoch, model, dataloader_train, criterion_absolute_loss, criterion_contrastive_loss, optimizer, device='cpu'):
-    loss_absolute_train = AvgrageMeter()
-    loss_contra_train =  AvgrageMeter()
-    
-    model.train()
-        
-    # avg_train_ACC, avg_train_APCER, avg_train_BPCER, avg_train_ACER, avg_train_loss_absolute, avg_train_loss_contra = [], [], [], [], [], []
-    avg_train_loss_absolute, avg_train_loss_contra = [], []
-    score_pred, score_truth = np.array([]), np.array([])
-    
-    for sample_batched in tqdm(dataloader_train, desc=f"[Epoch {epoch + 1}] Train"):
-        map_score, spoof_label, loss, loss_absolute, loss_contra = process_on_batch(
-            model=model, 
-            sample_batched=sample_batched, 
-            loss_absolute=loss_absolute_train, loss_contra=loss_contra_train, 
-            criterion_absolute_loss=criterion_absolute_loss, 
-            criterion_contrastive_loss=criterion_contrastive_loss,
-            optimizer=optimizer,
-            device=device
-        )
-        
-        loss.backward()
-        optimizer.step()
-        
-        score_pred = np.concatenate((score_pred, map_score))
-        score_truth = np.concatenate((score_truth, spoof_label))
-        avg_train_loss_absolute.append(loss_absolute.avg.cpu().detach().numpy())
-        avg_train_loss_contra.append(loss_contra.avg.cpu().detach().numpy())
-
-    avg_train_ACC, avg_train_APCER, avg_train_BPCER, avg_train_ACER = performances_score_val(map_score_val=zip(score_pred, score_truth))
-    train_metrics = {
-        'avg_train_loss_absolute': np.mean(avg_train_loss_absolute),
-        'avg_train_loss_contra': np.mean(avg_train_loss_contra),
-        'avg_train_ACC': np.mean(avg_train_ACC),
-        'avg_train_APCER': np.mean(avg_train_APCER),
-        'avg_train_BPCER': np.mean(avg_train_BPCER),
-        'avg_train_ACER': np.mean(avg_train_ACER)
-    }
-    return train_metrics
 
 # main function
-def train_model(dir_root, file_train_csv_path, file_val_csv_path, args):
+def train_test(dir_root, file_train_csv_path, file_val_csv_path, args):
 
     os.makedirs(os.path.join(args.log), exist_ok=True)
     print("created folder : ", args.log)
@@ -187,6 +126,7 @@ def train_model(dir_root, file_train_csv_path, file_val_csv_path, args):
     
     # --- Device ---
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")    
+    echo_batches = args.echo_batches
     
     # --- Save TensorBoard & Weights ---
     writer = SummaryWriter(log_dir=logs_save)
@@ -231,7 +171,7 @@ def train_model(dir_root, file_train_csv_path, file_val_csv_path, args):
 
     else:
         # build new model
-        model = CDCNpp(basic_conv=Conv2d_cd, theta=args.theta)
+        model = CDCNpp( basic_conv=Conv2d_cd, theta=args.theta)
         model = model.to(device)
 
         lr = args.lr
@@ -259,34 +199,55 @@ def train_model(dir_root, file_train_csv_path, file_val_csv_path, args):
         if (epoch + 1) % args.step_size == 0:
             lr *= args.gamma
         
+        loss_absolute_train = AvgrageMeter()
+        loss_contra_train =  AvgrageMeter()
+        loss_absolute_val = AvgrageMeter()
+        loss_contra_val =  AvgrageMeter()
+        model.train()
         
-        
-        train_metrics = trainining_on_epoch(
-            epoch=epoch, 
-            model=model, 
-            dataloader_train=dataloader_train, 
-            criterion_absolute_loss=criterion_absolute_loss, 
-            criterion_contrastive_loss=criterion_contrastive_loss, 
-            optimizer=optimizer,
-            device=device, 
-        )
+        for i, sample_batched in tqdm(enumerate(dataloader_train), desc=f"[Epoch {epoch + 1}] Train"):
+            map_score, spoof_label, loss, loss_absolute, loss_contra = process_on_batch(
+                model=model, 
+                sample_batched=sample_batched, 
+                loss_absolute=loss_absolute_train, loss_contra=loss_contra_train, 
+                criterion_absolute_loss=criterion_absolute_loss, 
+                criterion_contrastive_loss=criterion_contrastive_loss,
+                optimizer=optimizer,
+                device=device
+            )
+            
+            loss.backward()
+            optimizer.step()
+              
+            if i % echo_batches == echo_batches - 1:    # print every 50 mini-batches
+                # Visualization
+                # FeatureMap2Heatmap(x_input, x_Block1, x_Block2, x_Block3, map_x)
+                train_ACC, train_APCER, train_BPCER, train_ACER = performances_score_val(map_score_val=zip(map_score, spoof_label)) # performances train
+                
+                print('\nepoch:%d, mini-batch:%3d, lr=%f, Absolute_Depth_loss= %.4f, Contrastive_Depth_loss= %.4f, Total Loss= %.4f \n' % 
+                      (epoch + 1, i + 1, lr,  loss_absolute.avg, loss_contra.avg, (loss_absolute.avg + loss_contra.avg)))
+                
+                
+
+        train_ACC, train_APCER, train_BPCER, train_ACER = performances_score_val(map_score_val=zip(map_score, spoof_label)) # performances train
         
         # VAL DATA
-        vail_metrics = validate_on_epoch(
-            epoch=epoch, 
-            model=model, 
-            dataloader_val=dataloader_val,  
+        map_score, spoof_label, val_loss_absolute_avg, val_loss_contra_avg = validate_batch_images(
+            epoch + 1, model, dataloader_val, 
+            loss_absolute_val=loss_absolute_val, loss_contra_val=loss_contra_val, 
             criterion_absolute_loss=criterion_absolute_loss, 
             criterion_contrastive_loss=criterion_contrastive_loss, 
             optimizer=optimizer,
             device=device
         )
         
+        val_ACC, val_APCER, val_BPCER, val_ACER = performances_score_val(map_score_val=zip(map_score, spoof_label)) # performances val
+        
         # save best weight
-        if vail_metrics['avg_val_ACER'] < ACER_save:
-            ACER_save = vail_metrics['avg_val_ACER']
+        if val_ACER < ACER_save:
+            ACER_save = val_ACER
             torch.save(model.state_dict(), best_checkpoint_path)
-            print(f"✅ Best model saved (Val Acc: {ACER_save:.4f}%) to {best_checkpoint_path}")
+            print(f"✅ Best model saved (Val Acc: {ACER_save:.4f}%)")
         else:
             epochs_no_improve += 1
             print(f"⏳ No improvement ({epochs_no_improve}/{args.patience})")
@@ -300,46 +261,51 @@ def train_model(dir_root, file_train_csv_path, file_val_csv_path, args):
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict(),
-            'train_ACER': train_metrics['avg_train_ACER'],
-            'val_ACER': vail_metrics['avg_val_ACER'],
+            'train_ACC': train_ACC,
+            'train_APCER': train_APCER,
+            'train_BPCER': train_BPCER,
+            'train_ACER': train_ACER,
+            'val_ACC': val_ACC,
+            'val_APCER': val_APCER, 
+            'val_BPCER': val_BPCER, 
+            'val_ACER': val_ACER,
             'epochs_no_improve': epochs_no_improve
         }, last_checkpoint_path)
-        print(f"💾 Last checkpoint saved to {last_checkpoint_path}")
-        
+        print("💾 Last checkpoint saved.")
         
         # scheduler
         scheduler.step()
         
         # OUTPUT
         print('epoch:%d, Performances Train:  Accuracy= %.4f, APCER= %.4f, BPCER= %.4f, ACER= %.4f \n' % 
-              (epoch + 1, train_metrics['avg_train_ACC'], train_metrics['avg_train_APCER'], train_metrics['avg_train_BPCER'], train_metrics['avg_train_ACER']))
+              (epoch + 1, train_ACC, train_APCER, train_BPCER, train_ACER))
         
         print('epoch:%d, Loss Train:  Absolute_Depth_loss= %.4f, Contrastive_Depth_loss= %.4f, Total Loss= %.4f \n' % 
-              (epoch + 1, train_metrics['avg_train_loss_absolute'], train_metrics['avg_train_loss_contra'], (train_metrics['avg_train_loss_absolute']+ train_metrics['avg_train_loss_contra'])))
+              (epoch + 1, loss_absolute.avg, loss_contra.avg, (loss_absolute.avg + loss_contra.avg)))
         
         print('epoch:%d, Performances Val:  Accuracy= %.4f, APCER= %.4f, BPCER= %.4f, ACER= %.4f \n' % 
-              (epoch + 1, vail_metrics['avg_val_ACC'], vail_metrics['avg_val_APCER'], vail_metrics['avg_val_BPCER'], vail_metrics['avg_val_ACER']))
+              (epoch + 1, val_ACC, val_APCER, val_BPCER, val_ACER))
         
         print('epoch:%d, Loss Val:  Absolute_Depth_loss= %.4f, Contrastive_Depth_loss= %.4f, Total Loss= %.4f \n' % 
-              (epoch + 1, vail_metrics['avg_val_loss_absolute'], vail_metrics['avg_val_loss_contra'], (vail_metrics['avg_val_loss_absolute'] + vail_metrics['avg_val_loss_contra'])))
+              (epoch + 1, val_loss_absolute_avg, val_loss_contra_avg, (val_loss_absolute_avg + val_loss_contra_avg)))
         
         # Tensorboard log
         
-        writer.add_scalar("Accuracy/Train", train_metrics['avg_train_ACC'], epoch + 1)
-        writer.add_scalar("APCER/Train", train_metrics['avg_train_APCER'], epoch + 1)
-        writer.add_scalar("BPCER/Train", train_metrics['avg_train_BPCER'], epoch + 1)
-        writer.add_scalar("ACER/Train", train_metrics['avg_train_ACER'], epoch + 1)
-        writer.add_scalar("Absolute_Depth_loss/Train", train_metrics['avg_train_loss_absolute'], epoch + 1)
-        writer.add_scalar("Contrastive_Depth_loss/Train", train_metrics['avg_train_loss_contra'], epoch + 1)
-        writer.add_scalar("Loss/Train", (train_metrics['avg_train_loss_absolute']+ train_metrics['avg_train_loss_contra']), epoch + 1)
+        writer.add_scalar("Accuracy/Train", train_ACC, epoch + 1)
+        writer.add_scalar("APCER/Train", train_APCER, epoch + 1)
+        writer.add_scalar("BPCER/Train", train_BPCER, epoch + 1)
+        writer.add_scalar("ACER/Train", train_ACER, epoch + 1)
+        writer.add_scalar("Absolute_Depth_loss/Train", loss_absolute.avg, epoch + 1)
+        writer.add_scalar("Contrastive_Depth_loss/Train", loss_contra.avg, epoch + 1)
+        writer.add_scalar("Loss/Train", loss, epoch + 1)
         
-        writer.add_scalar("Accuracy/Val", vail_metrics['avg_val_ACC'], epoch + 1)
-        writer.add_scalar("APCER/Val", vail_metrics['avg_val_APCER'], epoch + 1)
-        writer.add_scalar("BPCER/Val", vail_metrics['avg_val_BPCER'], epoch + 1)
-        writer.add_scalar("ACER/Val", vail_metrics['avg_val_ACER'], epoch + 1)
-        writer.add_scalar("Absolute_Depth_loss/Val", vail_metrics['avg_val_loss_absolute'], epoch + 1)
-        writer.add_scalar("Contrastive_Depth_loss/Val", vail_metrics['avg_val_loss_contra'], epoch + 1)
-        writer.add_scalar("Loss/Train", (vail_metrics['avg_val_loss_absolute'] + vail_metrics['avg_val_loss_contra']), epoch + 1)
+        writer.add_scalar("Accuracy/Val", val_ACC, epoch + 1)
+        writer.add_scalar("APCER/Val", val_APCER, epoch + 1)
+        writer.add_scalar("BPCER/Val", val_BPCER, epoch + 1)
+        writer.add_scalar("ACER/Val", val_ACER, epoch + 1)
+        writer.add_scalar("Absolute_Depth_loss/Val", val_loss_absolute_avg, epoch + 1)
+        writer.add_scalar("Contrastive_Depth_loss/Val", val_loss_contra_avg, epoch + 1)
+        writer.add_scalar("Loss/Train", loss, epoch + 1)
 
     print("==============TRAIN DONE==============")
 
@@ -364,5 +330,5 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    train_model(dir_root=args.root_dir, file_train_csv_path=args.train_csv, file_val_csv_path=args.val_csv, args=args)
+    train_test(dir_root=args.root_dir, file_train_csv_path=args.train_csv, file_val_csv_path=args.val_csv, args=args)
     pass

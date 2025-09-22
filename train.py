@@ -26,9 +26,11 @@ def get_argparse():
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--patience', type=int, default=5)
     parser.add_argument('--lr', type=float, default=1e-4)
+    parser.add_argument('--gpu_id', type=str, default=0)
 
     parser.add_argument('--save_path', type=str, default="runs/dc_cdn")
     parser.add_argument('--resume', action='store_true', help='Resume training from last checkpoint')
+    parser.add_argument('--checkpoint', type=str, help='last checkpoint')
 
     parser.add_argument('--input_size', type=int, default=256)
     args = parser.parse_args()
@@ -60,7 +62,7 @@ def train(args):
     best_checkpoint_path = os.path.join(save_path, "weights", "best_dc_cdn_classifier.pt")
 
     # --- Device ---
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device(f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu")
 
     # --- Dataset ---
     train_transform = Tv2.Compose([
@@ -112,8 +114,8 @@ def train(args):
 
     # load resume
     start_epoch = 1
-    if resume and os.path.exists(last_checkpoint_path):
-        checkpoint = torch.load(last_checkpoint_path, map_location=device)
+    if resume and os.path.exists(args.checkpoint):
+        checkpoint = torch.load(args.checkpoint, map_location=device)
         model.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
