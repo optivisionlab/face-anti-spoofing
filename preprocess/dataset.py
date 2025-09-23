@@ -58,8 +58,8 @@ class LiveSpoofCelebDataset(Dataset):
         return img, depth_label, label
 
 
-class FAS_BCE_Dataset(Dataset):
-    def __init__(self, dataframe, base_dir, transform=None, is_train=True, random_frame=False, tf_ratio=0.5):
+class FAS_CE_Dataset(Dataset):
+    def __init__(self, dataframe, base_dir, transform=None, is_train=True, random_frame=False, tf_ratio=0.5, aug_spoof=False):
         self.dataframe = dataframe
         self.base_dir = base_dir
         self.transform = transform
@@ -67,6 +67,7 @@ class FAS_BCE_Dataset(Dataset):
         self.moire = Moire()
         self.random_frame = random_frame
         self.tf_ratio = tf_ratio
+        self.aug_spoof = aug_spoof
 
     def __len__(self):
         return len(self.dataframe)
@@ -104,7 +105,7 @@ class FAS_BCE_Dataset(Dataset):
                     cap.set(cv2.CAP_PROP_POS_FRAMES, random_frame_index) # chọn ngẫu nhiên 1 frame
                     ret, frame = cap.read()
                     if ret:
-                        image = frame.copy() # Convert to RGB
+                        image = frame.copy()
                     else:
                         print(f"Warning: Could not read frame {random_frame_index} from {img_path}")
                 else:
@@ -115,29 +116,32 @@ class FAS_BCE_Dataset(Dataset):
             print(f"Warning: Unsupported file format: {file_extension} for file {img_path}")
 
         # process label
-        label = self.dataframe.iloc[idx, 1] # 1 -> fake, 0 -> real
+        label = self.dataframe.iloc[idx, 1] # 1 -> spoof, 0 -> live
         
-        if label == 0 and self.is_train:
-            prob_value = random.random()
-            
-            if prob_value < 0.3:
-                label = 1
-                image = self.moire(image)
+        if self.aug_spoof:
+            if label == 'live' and self.is_train:
+                prob_value = random.random()
                 
-            elif prob_value >= 0.3 and prob_value < 0.6:
-                label = 1
-                color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4)
-                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)      
-                image_pil = Image.fromarray(image_rgb)
-                transformed_image_pil = color_jitter(image_pil)
-                transformed_image_np = np.array(transformed_image_pil)
-                image = cv2.cvtColor(transformed_image_np, cv2.COLOR_RGB2BGR) # Convert to BRG
+                if prob_value < 0.3:
+                    label = 'spoof'
+                    image = self.moire(image)
+                    
+                elif prob_value >= 0.3 and prob_value < 0.6:
+                    label = 'spoof'
+                    color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4)
+                    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)      
+                    image_pil = Image.fromarray(image_rgb)
+                    transformed_image_pil = color_jitter(image_pil)
+                    transformed_image_np = np.array(transformed_image_pil)
+                    image = cv2.cvtColor(transformed_image_np, cv2.COLOR_RGB2BGR) # Convert to BRG
 
-        # image = Image.fromarray(image)
         if self.transform:
             sample = self.transform(image)
-
-        return sample, label
+        
+        class_id = 0
+        if label == 'spoof':
+            class_id = 1
+        return sample, class_id
     
     
 class FAS_MSEMask_Dataset(Dataset):

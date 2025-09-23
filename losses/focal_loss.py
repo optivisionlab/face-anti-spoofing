@@ -23,10 +23,7 @@ class FocalLoss(nn.Module):
         # Handle alpha for class balancing in multi-class tasks
         if task_type == 'multi-class' and alpha is not None and isinstance(alpha, (list, torch.Tensor)):
             assert num_classes is not None, "num_classes must be specified for multi-class classification"
-            if isinstance(alpha, list):
-                self.alpha = torch.Tensor(alpha)
-            else:
-                self.alpha = alpha
+            self.alpha = torch.as_tensor(alpha, dtype=torch.float)
 
     def forward(self, inputs, targets):
         """
@@ -65,7 +62,8 @@ class FocalLoss(nn.Module):
 
         # Apply alpha if provided
         if self.alpha is not None:
-            alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
+            alpha_t = torch.as_tensor(self.alpha, device=inputs.device)
+            alpha_t = alpha_t * targets + (1 - alpha_t) * (1 - targets)
             bce_loss = alpha_t * bce_loss
 
         # Apply focal loss weighting
@@ -78,25 +76,17 @@ class FocalLoss(nn.Module):
         return loss
 
     def multi_class_focal_loss(self, inputs, targets):
-        """ Focal loss for multi-class classification. """
-        if self.alpha is not None:
-            alpha = self.alpha.to(inputs.device)
-
-        # Convert logits to probabilities with softmax
         probs = F.softmax(inputs, dim=1)
 
         # One-hot encode the targets
-        targets_one_hot = F.one_hot(targets, num_classes=self.num_classes).float()
+        targets_one_hot = F.one_hot(targets.long(), num_classes=self.num_classes).float()
 
-        # Compute cross-entropy for each class
-        ce_loss = -targets_one_hot * torch.log(probs)
-
-        # Compute focal weight
-        p_t = torch.sum(probs * targets_one_hot, dim=1)  # p_t for each sample
+        ce_loss = -targets_one_hot * torch.log(probs + 1e-9)
+        p_t = torch.sum(probs * targets_one_hot, dim=1)
         focal_weight = (1 - p_t) ** self.gamma
 
-        # Apply alpha if provided (per-class weighting)
         if self.alpha is not None:
+            alpha = torch.as_tensor(self.alpha, device=inputs.device, dtype=torch.float)
             alpha_t = alpha.gather(0, targets)
             ce_loss = alpha_t.unsqueeze(1) * ce_loss
 
@@ -122,7 +112,8 @@ class FocalLoss(nn.Module):
 
         # Apply alpha if provided
         if self.alpha is not None:
-            alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
+            alpha_t = torch.as_tensor(self.alpha, device=inputs.device, dtype=torch.float)
+            alpha_t = alpha_t * targets + (1 - alpha_t) * (1 - targets)
             bce_loss = alpha_t * bce_loss
 
         # Apply focal loss weight
