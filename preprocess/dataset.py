@@ -141,7 +141,7 @@ class FAS_BCE_Dataset(Dataset):
     
     
 class FAS_MSEMask_Dataset(Dataset):
-    def __init__(self, dataframe, base_dir, transform=None, is_train=True, random_frame=False, tf_ratio=0.5):
+    def __init__(self, dataframe, base_dir, transform=None, is_train=True, random_frame=False, tf_ratio=0.5, size_mask=32):
         self.dataframe = dataframe
         self.base_dir = base_dir
         self.transform = transform
@@ -149,6 +149,7 @@ class FAS_MSEMask_Dataset(Dataset):
         self.moire = Moire()
         self.random_frame = random_frame
         self.tf_ratio = tf_ratio
+        self.size_mask = size_mask
 
     def __len__(self):
         return len(self.dataframe)
@@ -199,32 +200,35 @@ class FAS_MSEMask_Dataset(Dataset):
             print(f"Warning: Unsupported file format: {file_extension} for file {img_path}")
 
         # process label
-        label = self.dataframe.iloc[idx, 1]
+        label_name = self.dataframe.iloc[idx, 1]
+        label, binary_mask = self.get_binary_mask(label_name=label_name, size_mask=self.size_mask)
         
-        if label == 'live' and self.is_train:
+        
+        # sample = {
+        #     'input_image': image, 'label_name': label_name, 'binary_mask': binary_mask, 'label': label
+        # }        
+        
+        if self.transform:
+            image = self.transform(image)
+
+        return image, label
+    
+    def get_binary_mask(self, label_name, size_mask=32):
+        sizes = (size_mask, size_mask)
+        
+        if label_name == 'live' and self.is_train:
             prob_value = random.random()
             
             if prob_value < 0.3:
-                label = 1
+                label_name = 'spoof'
                 image = self.moire(image)
                 
             elif prob_value >= 0.3 and prob_value < 0.6:
-                label = 1
+                label_name = 'spoof'
                 color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4)
-                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)      
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) # RGB  
                 image_pil = Image.fromarray(image_rgb)
                 transformed_image_pil = color_jitter(image_pil)
-                transformed_image_np = np.array(transformed_image_pil)
-                image = transformed_image_np.copy()
-
-        image = Image.fromarray(image)
-        if self.transform:
-            sample = self.transform(image)
-
-        return sample, label
-    
-    def get_binary_mask(self, label, size_mask=32):
-        sizes = (size_mask, size_mask)
-        if label == 'spoof':
-            return np.zeros(sizes)
-        return np.ones(sizes)
+                image = np.array(transformed_image_pil) # RGB
+        
+        return 0, np.zeros(sizes) if label_name == 'spoof' else 1, np.ones(sizes)
