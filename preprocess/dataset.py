@@ -59,12 +59,14 @@ class LiveSpoofCelebDataset(Dataset):
 
 
 class FAS_BCE_Dataset(Dataset):
-    def __init__(self, dataframe, base_dir, transform=None, is_train=True):
+    def __init__(self, dataframe, base_dir, transform=None, is_train=True, random_frame=False, tf_ratio=0.5):
         self.dataframe = dataframe
         self.base_dir = base_dir
         self.transform = transform
         self.is_train = is_train
         self.moire = Moire()
+        self.random_frame = random_frame
+        self.tf_ratio = tf_ratio
 
     def __len__(self):
         return len(self.dataframe)
@@ -96,7 +98,9 @@ class FAS_BCE_Dataset(Dataset):
             else:
                 frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
                 if frame_count > 0:
-                    random_frame_index = random.randint(5, frame_count - 5) # chọn ngẫu nhiên 1 frame
+                    random_frame_index = int(frame_count * self.tf_ratio)
+                    if self.random_frame:
+                        random_frame_index = random.randint(5, frame_count - 5) # chọn ngẫu nhiên 1 frame
                     cap.set(cv2.CAP_PROP_POS_FRAMES, random_frame_index) # chọn ngẫu nhiên 1 frame
                     ret, frame = cap.read()
                     if ret:
@@ -134,3 +138,93 @@ class FAS_BCE_Dataset(Dataset):
             sample = self.transform(image)
 
         return sample, label
+    
+    
+class FAS_MSEMask_Dataset(Dataset):
+    def __init__(self, dataframe, base_dir, transform=None, is_train=True, random_frame=False, tf_ratio=0.5):
+        self.dataframe = dataframe
+        self.base_dir = base_dir
+        self.transform = transform
+        self.is_train = is_train
+        self.moire = Moire()
+        self.random_frame = random_frame
+        self.tf_ratio = tf_ratio
+
+    def __len__(self):
+        return len(self.dataframe)
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        img_path = os.path.join(self.base_dir, self.dataframe.iloc[idx, 0])
+        image = None
+        _, file_extension = os.path.splitext(img_path)
+        file_extension = file_extension.lower()
+
+        if file_extension.lower() in ['.jpg', '.jpeg', '.png']:
+            
+            # Load image
+            frame = cv2.imread(img_path)
+            if frame is not None:
+                image = frame.copy()
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) # Convert to RGB
+            else:
+                print(f"Error: Could not read image file {img_path}")
+
+        elif file_extension.lower() in ['.mp4', '.mov', '.avi', '.mkv']:
+            
+            # Load video and extract a random frame
+            cap = cv2.VideoCapture(img_path)
+            if not cap.isOpened():
+                print(f"Error: Could not open video file {img_path}")
+            else:
+                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                if frame_count > 0:
+                    random_frame_index = int(frame_count * self.tf_ratio)
+                    if self.random_frame:
+                        random_frame_index = random.randint(5, frame_count - 5) # chọn ngẫu nhiên 1 frame
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, random_frame_index) # chọn ngẫu nhiên 1 frame
+                    ret, frame = cap.read()
+                    if ret:
+                        image = frame.copy()
+                        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) # Convert to RGB
+                    else:
+                        print(f"Warning: Could not read frame {random_frame_index} from {img_path}")
+                else:
+                    print(f"Warning: Video file {img_path} has no frames.")
+                cap.release()
+
+        else:
+            print(f"Warning: Unsupported file format: {file_extension} for file {img_path}")
+
+        # process label
+        label = self.dataframe.iloc[idx, 1]
+        
+        if label == 'live' and self.is_train:
+            prob_value = random.random()
+            
+            if prob_value < 0.3:
+                label = 1
+                image = self.moire(image)
+                
+            elif prob_value >= 0.3 and prob_value < 0.6:
+                label = 1
+                color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4)
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)      
+                image_pil = Image.fromarray(image_rgb)
+                transformed_image_pil = color_jitter(image_pil)
+                transformed_image_np = np.array(transformed_image_pil)
+                image = transformed_image_np.copy()
+
+        image = Image.fromarray(image)
+        if self.transform:
+            sample = self.transform(image)
+
+        return sample, label
+    
+    def get_binary_mask(self, label, size_mask=32):
+        sizes = (size_mask, size_mask)
+        if label == 'spoof':
+            return np.zeros(sizes)
+        return np.ones(sizes)
