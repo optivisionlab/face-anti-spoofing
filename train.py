@@ -125,7 +125,9 @@ def train(args):
     model = get_model(args.arch, args.num_classes, args.fp16)
     
     if args.pretrained:
+        print("=====load pretrained=====")
         load_pretrain(args.pretrained, model)
+        print("=====load pretrained done=====")
         
     model = model.to(device)
     inputs = torch.randn(1, 3, 256, 256).to(device)
@@ -180,9 +182,9 @@ def train(args):
         
         # === Train ===
         model.train()
-        train_loss, train_acc_total, train_acer_total, train_total = 0.0, 0.0, 0.0, 0.0
+        train_loss, train_acc_total, train_acer_total = 0.0, 0.0, 0.0
 
-        for i, (imgs, labels) in tqdm(enumerate(train_loader), desc=f"[Epoch {epoch + 1}] Train"):
+        for i, (imgs, labels) in enumerate(tqdm(train_loader, desc=f"[Epoch {epoch + 1}] Train")):
             global_step = epoch * len(train_loader) + i
 
             lr = adjust_learning_rate(optimizer, global_step, epoch, args)
@@ -201,8 +203,7 @@ def train(args):
             train_loss += loss.item()
             train_acc_total += compute_accuracy(pred=preds, target=labels)
             train_acer_total += compute_acer(preds=preds, target=labels)
-            train_total += labels.size(0)
-            
+ 
             if args.fp16:
                 scaler.scale(loss).backward()
                 if (i + 1) % args.accumulate_step == 0:
@@ -221,12 +222,12 @@ def train(args):
                 optimizer.zero_grad()
 
         avg_train_loss = train_loss / len(train_loader)
-        train_acc = train_acc_total / train_total
-        train_acer = train_acer_total / train_total
+        train_acc = train_acc_total / len(train_loader)
+        train_acer = train_acer_total / len(train_loader)
         
         # === Validation ===
         model.eval()
-        val_loss, val_acc_total, val_acer_total, val_total = 0.0, 0.0, 0.0, 0.0
+        val_loss, val_acc_total, val_acer_total = 0.0, 0.0, 0.0
 
         with torch.no_grad():
             for imgs, labels in tqdm(val_loader, desc=f"[Epoch {epoch + 1}] Val"):
@@ -241,11 +242,10 @@ def train(args):
                 val_loss += loss.item()
                 val_acc_total += compute_accuracy(pred=preds, target=labels)
                 val_acer_total += compute_acer(preds=preds, target=labels)
-                val_total += labels.size(0)
 
         avg_val_loss = val_loss / len(val_loader)
-        val_acc = val_acc_total / val_total * 100
-        val_acer = val_acer_total / val_total * 100
+        val_acc = val_acc_total / len(val_loader)
+        val_acer = val_acer_total / len(val_loader)
 
         # === TensorBoard log ===
         writer.add_scalar("Loss/Train", avg_train_loss, epoch + 1)
@@ -257,9 +257,9 @@ def train(args):
         writer.add_scalar("lr", lr, epoch + 1)
 
         # === Print log ===
-        print(f"\n[Epoch {epoch + 1}] lr: {lr:.6f} "
-            f"Train Loss: {avg_train_loss:.4f} | Train Acc: {train_acc:.4f}|| "
-            f"Val Loss: {avg_val_loss:.4f} | Val Acc: {val_acc:.4f}")
+        print(f"\n[Epoch {epoch + 1}] \tlr: {lr:.6f}\n"
+            f"Train Loss: {avg_train_loss:.4f} \tTrain Acc: {train_acc:.4f} \tTrain ACER: {train_acer:.4f}\n"
+            f"Val Loss: {avg_val_loss:.4f} \tVal Acc: {val_acc:.4f} \tVal ACER: {val_acer:.4f}")
 
         # === Save best model ===
         if val_acc > best_val_acc:
