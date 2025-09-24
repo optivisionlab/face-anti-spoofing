@@ -149,6 +149,8 @@ def train(args):
     #     optimizer, T_max=10, eta_min=0  # T_max = số epoch để quay về lr min
     # )
 
+    scaler = torch.cuda.amp.grad_scaler.GradScaler(growth_interval=400)
+    
     # load resume
     start_epoch = 0
     if args.resume and os.path.exists(args.checkpoint):
@@ -189,20 +191,38 @@ def train(args):
             optimizer.zero_grad()
             feats, preds = model(imgs)
             # loss_fcl = criterion_fcloss(preds, labels)
-            loss = criterion_scloss(feats, labels)
+            loss_scl = criterion_scloss(feats, labels)
             # loss = loss_fcl + args.single_center_loss_weight * loss_scl
-            
-            loss.backward()
-            optimizer.step()
+            loss = args.single_center_loss_weight * loss_scl
+            loss /= args.accumulate_step
+            # loss.backward()
+            # optimizer.step()
 
             train_loss += loss.item()
             train_acc_total += compute_accuracy(pred=preds, target=labels)
             train_acer_total += compute_acer(preds=preds, target=labels)
             train_total += labels.size(0)
+            
+            if args.fp16:
+                scaler.scale(loss).backward()
+                if (i + 1) % args.accumulate_step == 0:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 5)
+                    scaler.step(optimizer)
+                    scaler.update()
+                pass
+            else:
+                loss.backward()
+                if (i + 1) % args.accumulate_step == 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 5)
+                    optimizer.step()
+                    
+            if (i + 1) % args.accumulate_step == 0:
+                optimizer.zero_grad()
 
         avg_train_loss = train_loss / len(train_loader)
-        train_acc = train_acc_total / train_total * 100
-        train_acer = train_acer_total / train_total * 100
+        train_acc = train_acc_total / train_total
+        train_acer = train_acer_total / train_total
         
         # === Validation ===
         model.eval()
@@ -213,10 +233,11 @@ def train(args):
                 imgs, labels = imgs.to(device), labels.float().to(device)
 
                 feats, preds  = model(imgs)
-                loss_fcl = criterion_fcloss(preds, labels)
+                # loss_fcl = criterion_fcloss(preds, labels)
                 loss_scl = criterion_scloss(feats, labels)
-                loss = loss_fcl + args.single_center_loss_weight * loss_scl
-
+                # loss = loss_fcl + args.single_center_loss_weight * loss_scl
+                loss = args.single_center_loss_weight * loss_scl
+                
                 val_loss += loss.item()
                 val_acc_total += compute_accuracy(pred=preds, target=labels)
                 val_acer_total += compute_acer(preds=preds, target=labels)
@@ -236,16 +257,16 @@ def train(args):
         writer.add_scalar("lr", lr, epoch + 1)
 
         # === Print log ===
-        print(f"\n[Epoch {epoch + 1}] lr: {lr:.6f}"
-            f"Train Loss: {avg_train_loss:.4f} | Train Acc: {train_acc:.2f}% || "
-            f"Val Loss: {avg_val_loss:.4f} | Val Acc: {val_acc:.2f}%")
+        print(f"\n[Epoch {epoch + 1}] lr: {lr:.6f} "
+            f"Train Loss: {avg_train_loss:.4f} | Train Acc: {train_acc:.4f}|| "
+            f"Val Loss: {avg_val_loss:.4f} | Val Acc: {val_acc:.4f}")
 
         # === Save best model ===
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             epochs_no_improve = 0
             torch.save(model.state_dict(), best_checkpoint_path)
-            print(f"✅ Best model saved (Val Acc: {val_acc:.2f}%)")
+            print(f"✅ Best model saved (Val Acc: {val_acc:.4f})")
         else:
             epochs_no_improve += 1
             print(f"⏳ No improvement ({epochs_no_improve}/{args.patience})")

@@ -92,4 +92,4 @@ def compute_acer(preds, target):
     BPCER = FN / (TP + FN + 1e-8)
 
     ACER = (APCER + BPCER) / 2
-    return ACER, APCER, BPCER
+    return ACER
