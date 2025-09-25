@@ -1,6 +1,6 @@
 import os
 import torch
-import torch.optim as optim
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
@@ -41,8 +41,8 @@ def get_argparse():
     parser.add_argument('--cos', action='store_true', help='use cosine lr schedule')
     parser.add_argument('--warmup_steps', default=0, type=int)
     parser.add_argument('--total_steps', default=0, type=int)
-    parser.add_argument('--warmup_epochs', default=0, type=int, metavar='N',
-                    help='number of warmup epochs to adjust lr')
+    parser.add_argument('--warmup_epochs', default=0, type=int, metavar='N', help='number of warmup epochs to adjust lr')
+    parser.add_argument('--live_weight', default=1.0, type=float, help='live sample cross entropy loss weight')
 
     parser.add_argument('--input_size', type=int, default=256)
     parser.add_argument('--num_classes', type=int, default=2)
@@ -134,8 +134,10 @@ def train(args):
     feats, _ = model(inputs)
     
     # --- Loss & Optimizer ---
+    weights = torch.tensor([args.live_weight, 1.0])
     criterion_scloss = SingleCenterLoss(m=0.3, D=feats.shape[1], use_gpu=True) # logger.info(f'Create single center loss, features dim: {D}')
-    criterion_fcloss = FocalLoss(gamma=2, alpha=0.2, task_type='multi-class', num_classes=args.num_classes)
+    # criterion_fcloss = FocalLoss(gamma=2, alpha=0.2, task_type='multi-class', num_classes=args.num_classes)
+    criterion_celoss = nn.CrossEntropyLoss(weight=weights).cuda(device)
     
     if args.optimizer == 'SGD':
         optimizer = torch.optim.SGD(model.parameters(), args.lr,
@@ -189,13 +191,14 @@ def train(args):
 
             lr = adjust_learning_rate(optimizer, global_step, epoch, args)
             
-            imgs, labels = imgs.to(device), labels.float().to(device)
+            imgs, labels = imgs.to(device), labels.to(device)
             optimizer.zero_grad()
             feats, preds = model(imgs)
             # loss_fcl = criterion_fcloss(preds, labels)
+            loss_ce = criterion_celoss(preds, labels)
             loss_scl = criterion_scloss(feats, labels)
-            # loss = loss_fcl + args.single_center_loss_weight * loss_scl
-            loss = args.single_center_loss_weight * loss_scl
+            loss = loss_ce + args.single_center_loss_weight * loss_scl
+            # loss = args.single_center_loss_weight * loss_scl
             loss /= args.accumulate_step
             # loss.backward()
             # optimizer.step()
@@ -231,13 +234,13 @@ def train(args):
 
         with torch.no_grad():
             for imgs, labels in tqdm(val_loader, desc=f"[Epoch {epoch + 1}] Val"):
-                imgs, labels = imgs.to(device), labels.float().to(device)
+                imgs, labels = imgs.to(device), labels.to(device)
 
                 feats, preds  = model(imgs)
-                # loss_fcl = criterion_fcloss(preds, labels)
+                loss_ce = criterion_celoss(preds, labels)
                 loss_scl = criterion_scloss(feats, labels)
-                # loss = loss_fcl + args.single_center_loss_weight * loss_scl
-                loss = args.single_center_loss_weight * loss_scl
+                loss = loss_ce + args.single_center_loss_weight * loss_scl
+                # loss = args.single_center_loss_weight * loss_scl
                 
                 val_loss += loss.item()
                 val_acc_total += compute_accuracy(pred=preds, target=labels)
