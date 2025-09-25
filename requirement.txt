@@ -1,7 +1,15 @@
-tensorboard
-pandas
-numpy
-tqdm
-torchsummary
+tensorboard==2.20.0
+pandas==2.0.3
+numpy==1.26.4
+tqdm==4.67.1
+torchsummary==1.5.1
 # pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 # pip install torch==1.8.1+cu101 torchvision==0.9.1+cu101 torchaudio==0.8.1 -f https://download.pytorch.org/whl/torch_stable.html
+imgaug==0.4.0
+opencv-python==4.6.0.66 
+opencv-python-headless==4.10.0.84 
+opencv-contrib-python==4.6.0.66
+scikit-learn==1.7.1
+scipy==1.11.4
+scikit-image==0.25.2
+imageio==2.37.0

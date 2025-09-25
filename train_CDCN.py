@@ -4,12 +4,16 @@ import numpy as np
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from models.CDCN import Conv2d_cd, CDCNpp
-from preprocess.datatrain import Spoofing_Train_Images_Custom, Normaliztion, ToTensor, RandomHorizontalFlip, Cutout, RandomErasing
-from preprocess.dataval import Spoofing_Val_Images_Custom, Normaliztion_valtest, ToTensor_valtest
+from preprocess.datatrain import FaceAntiSpoofing_TrainDataset
+from preprocess.dataval import FaceAntiSpoofing_ValDataset
 import torch.nn.functional as F
 import torch.nn as nn
 import torch.optim as optim
-from utils.utils import AvgrageMeter
+from utils.utils import AvgrageMeter, performances_score_val
+from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
+import pandas as pd
+from preprocess.transforms import Normaliztion, ToTensor, RandomHorizontalFlip, Cutout, RandomErasing
 
 
 def contrast_depth_conv(input):
@@ -66,159 +70,265 @@ class Contrast_depth_loss(nn.Module):    # Pearson range [-1, 1] so if < 0, abs|
         return loss
 
 
-def validate_batch_images(model, dataloader_val, epoch, log_dir):
-    model.eval()
-    map_score_list = []
+def process_on_batch(model, sample_batched, loss_absolute=None, loss_contra=None, optimizer=None, criterion_absolute_loss=None, criterion_contrastive_loss=None, device='cpu'):
+    
+    inputs = sample_batched['image_x'].to(device)          # [B, C, H, W]
+    # string_name = sample_batched['string_name']        # list tên ảnh
+    spoof_label = sample_batched['spoofing_label'].to(device)
+    binary_mask = sample_batched['binary_mask'].to(device) # [B, H, W]
+    optimizer.zero_grad()
+    
+    map_x, embedding, x_Block1, x_Block2, x_Block3, x_input =  model(inputs)
+    absolute_loss = criterion_absolute_loss(map_x, binary_mask)
+    contrastive_loss = criterion_contrastive_loss(map_x, binary_mask)
+    loss = absolute_loss + contrastive_loss
+    
+    n = inputs.size(0)
+    loss_absolute.update(absolute_loss.data, n)
+    loss_contra.update(contrastive_loss.data, n)
+    
+    sum_map = map_x.sum(dim=(1, 2))  # shape: (32,)
+    sum_mask = binary_mask.sum(dim=(1, 2)) # shape: (32,)
+    sum_mask = torch.clamp(sum_mask, min=1) # # tránh chia cho 0
+    map_score = sum_map / sum_mask
+    map_score = torch.clamp(map_score, max=1.0) # nếu score > 1 thì set = 1
 
+    return map_score.cpu().detach().numpy(), spoof_label.squeeze(1).cpu().detach().numpy(), loss, loss_absolute, loss_contra
+
+
+def validate_batch_images(epoch, model, dataloader_val, loss_absolute_val, loss_contra_val, criterion_absolute_loss, criterion_contrastive_loss, optimizer=None, device='cpu'):
+    model.eval()    
     with torch.no_grad():
-        for i, sample_batched in enumerate(dataloader_val):
+        for i, sample_batched in tqdm(enumerate(dataloader_val), desc=f"[Epoch {epoch}] Val"):
             # Lấy batch input và mask
-            inputs = sample_batched['image_x'].cuda()          # [B, C, H, W]
-            string_name = sample_batched['string_name']        # list tên ảnh
-            binary_mask = sample_batched['binary_mask'].cuda() # [B, H, W]
-
-            # Forward qua model (theo batch)
-            map_x, embedding, x_Block1, x_Block2, x_Block3, x_input = model(inputs)  
-            # map_x shape: [B, 1, H, W] hoặc [B, H, W] tùy model
-
-            # Tính score cho từng ảnh trong batch
-            for b in range(inputs.size(0)):
-                score_norm = torch.sum(map_x[b]) / torch.sum(binary_mask[b])
-                map_score = score_norm.item()
-                if map_score > 1:
-                    map_score = 1.0
-
-                # Lưu kết quả (tên ảnh + score)
-                map_score_list.append(f"{string_name[b]} {map_score}\n")
-
-    # Ghi kết quả ra file txt
-    map_score_val_filename = os.path.join(log_dir, f"{log_dir}_map_score_val_{epoch+1}.txt")
-    with open(map_score_val_filename, 'w') as file:
-        file.writelines(map_score_list)
-
-    # Lưu model checkpoint
-    torch.save(model.state_dict(), os.path.join(log_dir, f"{log_dir}_{epoch+1}.pt"))
-
-    print(f"Validation done at epoch {epoch+1}, results saved in {map_score_val_filename}")
+            
+            map_score, spoof_label, _, loss_absolute, loss_contra = process_on_batch(model=model, sample_batched=sample_batched, 
+                                                                                                     loss_absolute=loss_absolute_val, loss_contra=loss_contra_val, 
+                                                                                                     criterion_absolute_loss=criterion_absolute_loss, 
+                                                                                                     criterion_contrastive_loss=criterion_contrastive_loss,
+                                                                                                     optimizer=optimizer,
+                                                                                                     device=device)            
+    return map_score, spoof_label, loss_absolute.avg, loss_contra.avg
 
 
 # main function
 def train_test(dir_root, file_train_csv_path, file_val_csv_path, args):
 
-    isExists = os.path.exists(args.log)
-    if not isExists:
-        os.makedirs(args.log)
-        
+    os.makedirs(os.path.join(args.log), exist_ok=True)
+    print("created folder : ", args.log)
+    count = len(os.listdir(os.path.join(args.log))) + 1
+    logs_save = os.path.join(args.log, f"train{count}", "logs")
+    weights_save = os.path.join(args.log, f"train{count}", "weights")
+    os.makedirs(logs_save, exist_ok=True)
+    print("created folder : ", logs_save)
+    os.makedirs(weights_save, exist_ok=True)
+    print("created folder : ", weights_save)
+    
+    # --- Device ---
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")    
     echo_batches = args.echo_batches
-
+    
+    # --- Save TensorBoard & Weights ---
+    writer = SummaryWriter(log_dir=logs_save)
+    best_checkpoint_path = os.path.join(weights_save, "best_weight.pt")
+    last_checkpoint_path = os.path.join(weights_save, "last_weight.pt")
+    
     print("==============START==============")
 
-
+    print("==============LOAD DATASET==============")
+    train_df = pd.read_csv(file_train_csv_path, usecols=['path', 'label'])
+    val_df = pd.read_csv(file_val_csv_path, usecols=['path', 'label'])
+    
+    # load train data
+    train_data = FaceAntiSpoofing_TrainDataset(
+        dataframe=train_df,
+        base_dir=dir_root,
+        resize=(256, 256),
+        size_mask=(32, 32),
+        transform=transforms.Compose([RandomErasing(), RandomHorizontalFlip(), ToTensor(), Cutout(), Normaliztion()])
+    )
+    
+    dataloader_train = DataLoader(train_data, batch_size=args.batchsize, shuffle=True, num_workers=args.num_worker)
+    
+    # load val data
+    val_data = FaceAntiSpoofing_ValDataset(
+        dataframe=val_df,
+        base_dir=dir_root,
+        resize=(256, 256),
+        size_mask=(32, 32),
+        transform=transforms.Compose([Normaliztion(), ToTensor()])
+    )
+            
+    dataloader_val = DataLoader(val_data, batch_size=args.batchsize, shuffle=False, num_workers=args.num_worker)
+    
+    print("==============LOAD DATASET DONE==============")
+    
+    print("==============SETUP TRAIN==============")
     # load the network, load the pre-trained model in UCF101?
     finetune = args.finetune
     if finetune==True:
         print('finetune!\n')
 
     else:
-
+        # build new model
         model = CDCNpp( basic_conv=Conv2d_cd, theta=args.theta)
-        model = model.cuda()
+        model = model.to(device)
 
         lr = args.lr
-        optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=0.00005)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
+        # # Bổ sung scheduler cosine annealing
+        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        #     optimizer, T_max=10, eta_min=0  # T_max = số epoch để quay về lr min
+        # )
     
-    criterion_absolute_loss = nn.MSELoss().cuda()
-    criterion_contrastive_loss = Contrast_depth_loss().cuda() 
+    criterion_absolute_loss = nn.MSELoss().to(device)
+    criterion_contrastive_loss = Contrast_depth_loss().to(device)
     
     ACER_save = 1.0
+    epochs_no_improve = 0
+    early_stop = False
+    print("==============SETUP TRAIN DONE==============")
     
+    print("==============START TRAIN==============")
     for epoch in range(args.epochs):  # loop over the dataset multiple times
-        scheduler.step()
+        if early_stop:
+            print("⏹️ Early stopping triggered.")
+            break
+        
         if (epoch + 1) % args.step_size == 0:
             lr *= args.gamma
-
         
-        loss_absolute = AvgrageMeter()
-        loss_contra =  AvgrageMeter()
-        #top5 = utils.AvgrageMeter()
-        
+        loss_absolute_train = AvgrageMeter()
+        loss_contra_train =  AvgrageMeter()
+        loss_absolute_val = AvgrageMeter()
+        loss_contra_val =  AvgrageMeter()
         model.train()
         
-        # load train data
-        train_data = Spoofing_Train_Images_Custom(
-            csv_path=file_train_csv_path, 
-            root_dir=dir_root,
-            transform=transforms.Compose([RandomErasing(), RandomHorizontalFlip(),  ToTensor(), Cutout(), Normaliztion()])
+        for i, sample_batched in tqdm(enumerate(dataloader_train), desc=f"[Epoch {epoch + 1}] Train"):
+            map_score, spoof_label, loss, loss_absolute, loss_contra = process_on_batch(
+                model=model, 
+                sample_batched=sample_batched, 
+                loss_absolute=loss_absolute_train, loss_contra=loss_contra_train, 
+                criterion_absolute_loss=criterion_absolute_loss, 
+                criterion_contrastive_loss=criterion_contrastive_loss,
+                optimizer=optimizer,
+                device=device
             )
-        
-        dataloader_train = DataLoader(train_data, batch_size=args.batchsize, shuffle=True, num_workers=4)
-        
-        # load val data
-        val_data = Spoofing_Val_Images_Custom(
-                    csv_path=file_val_csv_path, 
-                    root_dir=dir_root, 
-                    transform=transforms.Compose([Normaliztion_valtest(), ToTensor_valtest()])
-                )
-                
-        dataloader_val = DataLoader(val_data, batch_size=args.batchsize, shuffle=False, num_workers=4)
-        
-        for i, sample_batched in enumerate(dataloader_train):
-            # get the inputs
-            inputs, binary_mask, spoof_label = sample_batched['image_x'].cuda(), sample_batched['binary_mask'].cuda(), sample_batched['spoofing_label'].cuda() 
-
-            optimizer.zero_grad()
-
-            # forward + backward + optimize
-            map_x, embedding, x_Block1, x_Block2, x_Block3, x_input =  model(inputs)
-            
-            #pdb.set_trace()
-            #pdb.set_trace()
-            absolute_loss = criterion_absolute_loss(map_x, binary_mask)
-            contrastive_loss = criterion_contrastive_loss(map_x, binary_mask)
-            
-            loss =  absolute_loss + contrastive_loss
             
             loss.backward()
-            
             optimizer.step()
-            
-            n = inputs.size(0)
-            loss_absolute.update(absolute_loss.data, n)
-            loss_contra.update(contrastive_loss.data, n)
-            
-            
+              
             if i % echo_batches == echo_batches - 1:    # print every 50 mini-batches
-                
-                # visualization
+                # Visualization
                 # FeatureMap2Heatmap(x_input, x_Block1, x_Block2, x_Block3, map_x)
+                train_ACC, train_APCER, train_BPCER, train_ACER = performances_score_val(map_score_val=zip(map_score, spoof_label)) # performances train
+                
+                print('\nepoch:%d, mini-batch:%3d, lr=%f, Absolute_Depth_loss= %.4f, Contrastive_Depth_loss= %.4f, Total Loss= %.4f \n' % 
+                      (epoch + 1, i + 1, lr,  loss_absolute.avg, loss_contra.avg, (loss_absolute.avg + loss_contra.avg)))
+                
+                
 
-                # log written
-                print('epoch:%d, mini-batch:%3d, lr=%f, Absolute_Depth_loss= %.4f, Contrastive_Depth_loss= %.4f' % (epoch + 1, i + 1, lr,  loss_absolute.avg, loss_contra.avg))
+        train_ACC, train_APCER, train_BPCER, train_ACER = performances_score_val(map_score_val=zip(map_score, spoof_label)) # performances train
         
-            #break            
-            
-        # whole epoch average
-        print('epoch:%d, Train:  Absolute_Depth_loss= %.4f, Contrastive_Depth_loss= %.4f\n' % (epoch + 1, loss_absolute.avg, loss_contra.avg))
+        # VAL DATA
+        map_score, spoof_label, val_loss_absolute_avg, val_loss_contra_avg = validate_batch_images(
+            epoch + 1, model, dataloader_val, 
+            loss_absolute_val=loss_absolute_val, loss_contra_val=loss_contra_val, 
+            criterion_absolute_loss=criterion_absolute_loss, 
+            criterion_contrastive_loss=criterion_contrastive_loss, 
+            optimizer=optimizer,
+            device=device
+        )
+        
+        val_ACC, val_APCER, val_BPCER, val_ACER = performances_score_val(map_score_val=zip(map_score, spoof_label)) # performances val
+        
+        # save best weight
+        if val_ACER < ACER_save:
+            ACER_save = val_ACER
+            torch.save(model.state_dict(), best_checkpoint_path)
+            print(f"✅ Best model saved (Val Acc: {ACER_save:.4f}%)")
+        else:
+            epochs_no_improve += 1
+            print(f"⏳ No improvement ({epochs_no_improve}/{args.patience})")
+            if epochs_no_improve >= args.patience:
+                early_stop = True
+                print("⛔ Early stopping reached patience.")
+        
+        # save last weight
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'train_ACC': train_ACC,
+            'train_APCER': train_APCER,
+            'train_BPCER': train_BPCER,
+            'train_ACER': train_ACER,
+            'val_ACC': val_ACC,
+            'val_APCER': val_APCER, 
+            'val_BPCER': val_BPCER, 
+            'val_ACER': val_ACER,
+            'epochs_no_improve': epochs_no_improve
+        }, last_checkpoint_path)
+        print("💾 Last checkpoint saved.")
+        
+        # scheduler
+        scheduler.step()
+        
+        # OUTPUT
+        print('epoch:%d, Performances Train:  Accuracy= %.4f, APCER= %.4f, BPCER= %.4f, ACER= %.4f \n' % 
+              (epoch + 1, train_ACC, train_APCER, train_BPCER, train_ACER))
+        
+        print('epoch:%d, Loss Train:  Absolute_Depth_loss= %.4f, Contrastive_Depth_loss= %.4f, Total Loss= %.4f \n' % 
+              (epoch + 1, loss_absolute.avg, loss_contra.avg, (loss_absolute.avg + loss_contra.avg)))
+        
+        print('epoch:%d, Performances Val:  Accuracy= %.4f, APCER= %.4f, BPCER= %.4f, ACER= %.4f \n' % 
+              (epoch + 1, val_ACC, val_APCER, val_BPCER, val_ACER))
+        
+        print('epoch:%d, Loss Val:  Absolute_Depth_loss= %.4f, Contrastive_Depth_loss= %.4f, Total Loss= %.4f \n' % 
+              (epoch + 1, val_loss_absolute_avg, val_loss_contra_avg, (val_loss_absolute_avg + val_loss_contra_avg)))
+        
+        # Tensorboard log
+        
+        writer.add_scalar("Accuracy/Train", train_ACC, epoch + 1)
+        writer.add_scalar("APCER/Train", train_APCER, epoch + 1)
+        writer.add_scalar("BPCER/Train", train_BPCER, epoch + 1)
+        writer.add_scalar("ACER/Train", train_ACER, epoch + 1)
+        writer.add_scalar("Absolute_Depth_loss/Train", loss_absolute.avg, epoch + 1)
+        writer.add_scalar("Contrastive_Depth_loss/Train", loss_contra.avg, epoch + 1)
+        writer.add_scalar("Loss/Train", loss, epoch + 1)
+        
+        writer.add_scalar("Accuracy/Val", val_ACC, epoch + 1)
+        writer.add_scalar("APCER/Val", val_APCER, epoch + 1)
+        writer.add_scalar("BPCER/Val", val_BPCER, epoch + 1)
+        writer.add_scalar("ACER/Val", val_ACER, epoch + 1)
+        writer.add_scalar("Absolute_Depth_loss/Val", val_loss_absolute_avg, epoch + 1)
+        writer.add_scalar("Contrastive_Depth_loss/Val", val_loss_contra_avg, epoch + 1)
+        writer.add_scalar("Loss/Train", loss, epoch + 1)
 
-        validate_batch_images(model, dataloader_val, epoch, args.log)
+    print("==============TRAIN DONE==============")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="save quality using landmarkpose model")
-    parser.add_argument('--gpu', type=int, default=0, help='the gpu id used for predict')
-    parser.add_argument('--lr', type=float, default=0.00008, help='initial learning rate')  #default=0.0001
-    parser.add_argument('--batchsize', type=int, default=9, help='initial batchsize')  #default=7  
+    parser.add_argument('--num_worker', type=int, default=2, help='number of worker')
+    parser.add_argument('--lr', type=float, default=0.0001, help='initial learning rate')  # default=0.0001
+    parser.add_argument('--weight_decay', type=float, default=0.00005, help='initial weight decay')  # default=0.0001
     parser.add_argument('--step_size', type=int, default=20, help='how many epochs lr decays once')  # 500  | DPC = 400
+    parser.add_argument('--batchsize', type=int, default=32, help='initial batchsize')  # default= 32
     parser.add_argument('--gamma', type=float, default=0.5, help='gamma of optim.lr_scheduler.StepLR, decay of lr')
     parser.add_argument('--echo_batches', type=int, default=50, help='how many batches display once')  # 50
     parser.add_argument('--epochs', type=int, default=5, help='total training epochs')
-    parser.add_argument('--log', type=str, default="CDCNpp_BinaryMask_P1_07", help='log and save model name')
+    parser.add_argument('--log', type=str, default="CDCNpp", help='log and save model name')
     parser.add_argument('--finetune', action='store_true', default=False, help='whether finetune other models')
     parser.add_argument('--theta', type=float, default=0.7, help='hyper-parameters in CDCNpp')
-    parser.add_argument('--train_csv', type=str, default="/data02/manhquang/dataset/celeba-spoof/CelebA_Spoof_/CelebA_Spoof/metas/intra_test/train_label.txt")
-    parser.add_argument('--val_csv', type=str, default="/data02/manhquang/dataset/celeba-spoof/CelebA_Spoof_/CelebA_Spoof/metas/intra_test/test_label.txt")
-    parser.add_argument('--root_dir', type=str, default="/data02/manhquang/dataset/celeba-spoof/CelebA_Spoof_/CelebA_Spoof", help='Root directory of dataset')
+    parser.add_argument('--train_csv', type=str, default="CelebA_Spoof/metas/intra_test/train_label.txt")
+    parser.add_argument('--val_csv', type=str, default="CelebA_Spoof_/CelebA_Spoof/metas/intra_test/test_label.txt")
+    parser.add_argument('--root_dir', type=str, default="celeba-spoof/CelebA_Spoof_/CelebA_Spoof", help='Root directory of dataset')
+    parser.add_argument('--patience', type=int, default=5)
+    
     args = parser.parse_args()
+    
     train_test(dir_root=args.root_dir, file_train_csv_path=args.train_csv, file_val_csv_path=args.val_csv, args=args)
     pass
