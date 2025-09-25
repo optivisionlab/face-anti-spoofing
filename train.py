@@ -136,7 +136,7 @@ def train(args):
     # --- Loss & Optimizer ---
     weights = torch.tensor([args.live_weight, 1.0])
     criterion_scloss = SingleCenterLoss(m=0.3, D=feats.shape[1], use_gpu=True) # logger.info(f'Create single center loss, features dim: {D}')
-    # criterion_fcloss = FocalLoss(gamma=2, alpha=0.2, task_type='multi-class', num_classes=args.num_classes)
+    criterion_fcloss = FocalLoss(gamma=2, alpha=0.2, task_type='multi-class', num_classes=args.num_classes)
     criterion_celoss = nn.CrossEntropyLoss(weight=weights).cuda(device)
     
     if args.optimizer == 'SGD':
@@ -194,10 +194,10 @@ def train(args):
             imgs, labels = imgs.to(device), labels.to(device)
             optimizer.zero_grad()
             feats, preds = model(imgs)
-            # loss_fcl = criterion_fcloss(preds, labels)
-            loss_ce = criterion_celoss(preds, labels)
+            loss_fcl = criterion_fcloss(preds, labels)
+            # loss_ce = criterion_celoss(preds, labels)
             loss_scl = criterion_scloss(feats, labels)
-            loss = loss_ce + args.single_center_loss_weight * loss_scl
+            loss = loss_fcl + args.single_center_loss_weight * loss_scl
             # loss = args.single_center_loss_weight * loss_scl
             loss /= args.accumulate_step
             # loss.backward()
@@ -237,9 +237,10 @@ def train(args):
                 imgs, labels = imgs.to(device), labels.to(device)
 
                 feats, preds  = model(imgs)
-                loss_ce = criterion_celoss(preds, labels)
+                loss_fcl = criterion_fcloss(preds, labels)
+                # loss_ce = criterion_celoss(preds, labels)
                 loss_scl = criterion_scloss(feats, labels)
-                loss = loss_ce + args.single_center_loss_weight * loss_scl
+                loss = loss_fcl + args.single_center_loss_weight * loss_scl
                 # loss = args.single_center_loss_weight * loss_scl
                 
                 val_loss += loss.item()

@@ -86,7 +86,7 @@ class FocalLoss(nn.Module):
         focal_weight = (1 - p_t) ** self.gamma
 
         if self.alpha is not None:
-            alpha = torch.as_tensor(self.alpha, device=inputs.device, dtype=torch.float)
+            alpha = torch.as_tensor([1 - self.alpha, self.alpha], device=inputs.device, dtype=torch.float)    
             alpha_t = alpha.gather(0, targets)
             ce_loss = alpha_t.unsqueeze(1) * ce_loss
 
