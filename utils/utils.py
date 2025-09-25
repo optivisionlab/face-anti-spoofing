@@ -510,3 +510,32 @@ def FeatureMap2Heatmap(args, x, feature1, feature2, feature3, map_x):
     plt.colorbar()
     plt.savefig(args.log+'/'+args.log + '_x_DepthMap_visual.jpg')
     plt.close()
+    
+    
+def performances_score_val(map_score_val):
+    val_scores = []
+    val_labels = []
+    data = []
+    count = 0.0
+    num_real = 0.0
+    num_fake = 0.0
+    for score, label in map_score_val:
+        val_scores.append(score)
+        val_labels.append(int(label))
+        data.append({'map_score': score, 'label': label})
+        if label==1:
+            num_real += 1
+        else:
+            num_fake += 1
+    
+    fpr, tpr, threshold = roc_curve(val_labels, val_scores, pos_label=1)
+    val_err, val_threshold = get_err_threhold(fpr, tpr, threshold)
+    
+    type1 = len([s for s in data if s['map_score'] <= val_threshold and s['label'] == 1])
+    type2 = len([s for s in data if s['map_score'] > val_threshold and s['label'] == 0])
+    
+    val_ACC = 1 - (type1 + type2) / len(val_labels)
+    val_APCER = type2 / num_fake
+    val_BPCER = type1 / num_real
+    val_ACER = (val_APCER + val_BPCER) / 2.0
+    return val_ACC, val_APCER, val_BPCER, val_ACER
