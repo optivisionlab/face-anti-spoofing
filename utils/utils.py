@@ -2,12 +2,10 @@ import os
 import numpy as np
 import torch
 import shutil
-import torchvision.transforms as transforms
 from torch.autograd import Variable
-import sklearn
 from sklearn import metrics
 from sklearn.metrics import roc_curve, auc
-import pdb
+import argparse
 
 class AvgrageMeter(object):
 
@@ -539,3 +537,48 @@ def performances_score_val(map_score_val):
     val_BPCER = type1 / num_real
     val_ACER = (val_APCER + val_BPCER) / 2.0
     return val_ACC, val_APCER, val_BPCER, val_ACER
+
+
+def get_argparse():
+    parser = argparse.ArgumentParser(description="Train DC_CDN model for face anti-spoofing")
+
+    parser.add_argument('--train_csv', type=str, default="train_label.csv")
+    parser.add_argument('--val_csv', type=str, default="val_label.csv")
+    parser.add_argument('--test_csv', type=str, default="test_label.csv")
+    parser.add_argument('--root_dir', type=str, default="CelebA_Spoof_/CelebA_Spoof", help='Root directory of dataset')
+
+    parser.add_argument('--batch_size', type=int, default=4)
+    parser.add_argument('--num_epochs', type=int, default=10)
+    parser.add_argument('--patience', type=int, default=5)
+    parser.add_argument('--gpu_id', type=str, default=0)
+    parser.add_argument('--workers', default=4, type=int, metavar='N', help='number of data loading workers (default: 4)')
+
+    parser.add_argument('--optimizer', type=str, default='SGD', help='use SGD or AdamW')
+    parser.add_argument('--save_path', type=str, default="runs/dc_cdn")
+    parser.add_argument('--resume', action='store_true', help='Resume training from last checkpoint')
+    parser.add_argument('--checkpoint', type=str, help='last checkpoint')
+    parser.add_argument('--wd', '--weight_decay', default=1e-4, type=float, metavar='W', help='weight decay (default: 1e-4)', dest='weight_decay')
+    parser.add_argument('--momentum', default=0.9, type=float, metavar='M', help='momentum')
+    parser.add_argument('--lr', '--learning_rate', default=0.001, type=float, metavar='LR', help='initial learning rate', dest='lr')
+    parser.add_argument('--accumulate_step', default=1, type=int)
+    parser.add_argument('--schedule', default='40,60', type=str, help='learning rate schedule (when to drop lr by 10x)')
+    parser.add_argument('--cos', action='store_true', help='use cosine lr schedule')
+    parser.add_argument('--warmup_steps', default=0, type=int)
+    parser.add_argument('--total_steps', default=0, type=int)
+    parser.add_argument('--warmup_epochs', default=0, type=int, metavar='N', help='number of warmup epochs to adjust lr')
+    parser.add_argument('--live_weight', default=1.0, type=float, help='live sample cross entropy loss weight')
+
+    parser.add_argument('--input_size', type=int, default=256)
+    parser.add_argument('--num_classes', type=int, default=2)
+    parser.add_argument('--pretrained', action='store_true', help='use pre-trained model')
+    parser.add_argument('--fp16', action='store_true', help='use fp16')
+    parser.add_argument('--single_center_loss_weight', default=0.001, type=float)
+    parser.add_argument('--arch', metavar='ARCH', type=str, help='model architecture')
+    
+    parser.add_argument('--aug_spoof', action='store_true', help='use aug image live to spoof') 
+    parser.add_argument('--tf_ratio', default=0.5, type=float, help='set time frame raito')
+    parser.add_argument('--random_frame', action='store_true', help='set random frame')
+    parser.add_argument('--best_model', type=str, help='best checkpoint')
+    
+    args = parser.parse_args()
+    return args

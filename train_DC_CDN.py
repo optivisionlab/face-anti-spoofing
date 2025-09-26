@@ -6,30 +6,9 @@ from torchvision import transforms
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-import argparse
-import os
-from dataset import LiveSpoofDataset, LiveSpoofCelebDataset
 from models.DC_CDN import DC_CDN_Classifier, DC_CDN
 from losses import Contrast_depth_loss
-
-
-def get_argparse():
-    parser = argparse.ArgumentParser(description="Train DC_CDN model for face anti-spoofing")
-
-    parser.add_argument('--train_csv', type=str, default="/data02/manhquang/dataset/celeba-spoof/CelebA_Spoof_/CelebA_Spoof/metas/intra_test/train_label.txt")
-    parser.add_argument('--val_csv', type=str, default="/data02/manhquang/dataset/celeba-spoof/CelebA_Spoof_/CelebA_Spoof/metas/intra_test/test_label.txt")
-    parser.add_argument('--root_dir', type=str, default="/data02/manhquang/dataset/celeba-spoof/CelebA_Spoof_/CelebA_Spoof", help='Root directory of dataset')
-
-    parser.add_argument('--batch_size', type=int, default=4)
-    parser.add_argument('--num_epochs', type=int, default=10)
-    parser.add_argument('--patience', type=int, default=5)
-    parser.add_argument('--lr', type=float, default=1e-4)
-
-    parser.add_argument('--save_path', type=str, default="runs/dc_cdn")
-    parser.add_argument('--resume', action='store_true', help='Resume training from last checkpoint')
-
-    args = parser.parse_args()
-    return args
+from utils.utils import get_argparse
 
 
 def train(args):
