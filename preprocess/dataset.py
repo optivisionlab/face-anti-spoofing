@@ -118,22 +118,23 @@ class FAS_CE_Dataset(Dataset):
         # process label
         label = self.dataframe.iloc[idx, 1] # 1 -> spoof, 0 -> live
         
-        if self.aug_spoof:
-            if label == 'live' and self.is_train:
-                prob_value = random.random()
-                
-                if prob_value < 0.3:
-                    label = 'spoof'
-                    image = self.moire(image)
+        if self.is_train:
+            if self.aug_spoof:
+                if label == 'live':
+                    prob_value = random.random()
                     
-                elif prob_value >= 0.3 and prob_value < 0.6:
-                    label = 'spoof'
-                    color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4)
-                    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)      
-                    image_pil = Image.fromarray(image_rgb)
-                    transformed_image_pil = color_jitter(image_pil)
-                    transformed_image_np = np.array(transformed_image_pil)
-                    image = cv2.cvtColor(transformed_image_np, cv2.COLOR_RGB2BGR) # Convert to BRG
+                    if prob_value < 0.3:
+                        label = 'spoof'
+                        image = self.moire(image)
+                        
+                    elif prob_value >= 0.3 and prob_value < 0.6:
+                        label = 'spoof'
+                        color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4)
+                        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)      
+                        image_pil = Image.fromarray(image_rgb)
+                        transformed_image_pil = color_jitter(image_pil)
+                        transformed_image_np = np.array(transformed_image_pil)
+                        image = cv2.cvtColor(transformed_image_np, cv2.COLOR_RGB2BGR) # Convert to BRG
 
         if self.transform:
             sample = self.transform(image)
