@@ -4,59 +4,15 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-import argparse
 import os
 from preprocess.dataset import FAS_CE_Dataset
-from models.utils import get_model, load_pretrain
+from models.utils import get_model, load_pretrain, get_argparse
 from losses.focal_loss import FocalLoss
 from losses.single_center_loss import SingleCenterLoss
 from preprocess import transformsv2 as Tv2
 import pandas as pd
-import random
+import random, glob
 from metrics.misc import compute_acer, compute_accuracy, adjust_learning_rate
-
-
-def get_argparse():
-    parser = argparse.ArgumentParser(description="Train DC_CDN model for face anti-spoofing")
-
-    parser.add_argument('--train_csv', type=str, default="/data02/manhquang/dataset/celeba-spoof/CelebA_Spoof_/CelebA_Spoof/metas/intra_test/train_label.txt")
-    parser.add_argument('--val_csv', type=str, default="/data02/manhquang/dataset/celeba-spoof/CelebA_Spoof_/CelebA_Spoof/metas/intra_test/test_label.txt")
-    parser.add_argument('--root_dir', type=str, default="/data02/manhquang/dataset/celeba-spoof/CelebA_Spoof_/CelebA_Spoof", help='Root directory of dataset')
-
-    parser.add_argument('--batch_size', type=int, default=4)
-    parser.add_argument('--num_epochs', type=int, default=10)
-    parser.add_argument('--patience', type=int, default=5)
-    parser.add_argument('--gpu_id', type=str, default=0)
-    parser.add_argument('--workers', default=4, type=int, metavar='N', help='number of data loading workers (default: 4)')
-
-    parser.add_argument('--optimizer', type=str, default='SGD', help='use SGD or AdamW')
-    parser.add_argument('--save_path', type=str, default="runs/dc_cdn")
-    parser.add_argument('--resume', action='store_true', help='Resume training from last checkpoint')
-    parser.add_argument('--checkpoint', type=str, help='last checkpoint')
-    parser.add_argument('--wd', '--weight_decay', default=1e-4, type=float, metavar='W', help='weight decay (default: 1e-4)', dest='weight_decay')
-    parser.add_argument('--momentum', default=0.9, type=float, metavar='M', help='momentum')
-    parser.add_argument('--lr', '--learning_rate', default=0.001, type=float, metavar='LR', help='initial learning rate', dest='lr')
-    parser.add_argument('--accumulate_step', default=1, type=int)
-    parser.add_argument('--schedule', default='40,60', type=str, help='learning rate schedule (when to drop lr by 10x)')
-    parser.add_argument('--cos', action='store_true', help='use cosine lr schedule')
-    parser.add_argument('--warmup_steps', default=0, type=int)
-    parser.add_argument('--total_steps', default=0, type=int)
-    parser.add_argument('--warmup_epochs', default=0, type=int, metavar='N', help='number of warmup epochs to adjust lr')
-    parser.add_argument('--live_weight', default=1.0, type=float, help='live sample cross entropy loss weight')
-
-    parser.add_argument('--input_size', type=int, default=256)
-    parser.add_argument('--num_classes', type=int, default=2)
-    parser.add_argument('--pretrained', action='store_true', help='use pre-trained model')
-    parser.add_argument('--fp16', action='store_true', help='use fp16')
-    parser.add_argument('--single_center_loss_weight', default=0.001, type=float)
-    parser.add_argument('--arch', metavar='ARCH', type=str, help='model architecture')
-    
-    parser.add_argument('--aug_spoof', action='store_true', help='use aug image live to spoof') 
-    parser.add_argument('--tf_ratio', default=0.5, type=float, help='set time frame raito')
-    parser.add_argument('--random_frame', action='store_true', help='set random frame')
-    
-    args = parser.parse_args()
-    return args
 
 
 def train(args):
@@ -65,7 +21,7 @@ def train(args):
     
     # --- Setup ----
     os.makedirs(args.save_path, exist_ok=True)
-    count = len(os.listdir(os.path.join(args.save_path))) + 1
+    count = len(glob.glob(os.path.join(args.save_path, "train*"))) + 1
     save_path = os.path.join(args.save_path, f"train_{count}")
     os.makedirs(os.path.join(save_path, "logs"), exist_ok=True)
     os.makedirs(os.path.join(save_path, "weights"), exist_ok=True)
