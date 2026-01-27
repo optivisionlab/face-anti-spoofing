@@ -38,31 +38,6 @@ import models.resnet as resnet
 def get_model(arch, num_classes=2, fp16=False):
     if arch.startswith('resnet'):
         model = resnet.__dict__[arch](num_classes=num_classes, fp16=fp16)
-    # elif arch.startswith('mobilenet_v2'):
-    #     model = mobilenetv2.__dict__[arch](pretrained=False, num_classes=num_classes)
-    # elif arch.startswith('mobilenet_v3'):
-    #     model = mobilenetv3.__dict__[arch](pretrained=False, num_classes=num_classes)
-    # elif arch.startswith('efficient'):
-    #     model = EfficientNet.from_name(arch, num_classes=num_classes)
-    # elif arch.startswith('convnext'):
-    #     model = convnext.__dict__[arch](pretrained=False, num_classes=num_classes, fp16=fp16)
-    # elif arch.startswith('coatnet'):
-    #     model = coatnet.__dict__[arch](num_classes=num_classes, fp16=fp16)
-    # elif arch.startswith('max_vit'):
-    #     model = maxvit.__dict__[arch](num_classes=num_classes, fp16=fp16)
-    # elif arch.startswith('mobileone'): # mobileone-s0 -- mobleone-s4
-    #     variant = arch.split('-')[1] # s0,..,s4, t0, t1, t2
-    #     model = mobileone(variant=variant, num_classes=num_classes)
-    # elif arch.startswith('swin_v2'):
-    #     model = swin_transformer_v2.__dict__[arch](num_classes=num_classes, fp16=fp16)
-    # elif arch.startswith('dwspgnet'):
-    #     model = dwspgnet.__dict__[arch](num_classes=num_classes)
-    # elif arch.startswith('shufflenetv2a'):
-    #     variant = arch.split('_')[1] # 0.5x, 0.75x, 1.0x, 1.5x, 2.0x
-    #     model = ShuffleNetV2(num_classes=num_classes, model_size=variant, use_conv_last=False, use_pooling=False)
-    # elif arch.startswith('shufflenetv2'):
-    #     variant = arch.split('_')[1] # 0.5x, 0.75x, 1.0x, 1.5x, 2.0x
-    #     model = ShuffleNetV2(num_classes=num_classes, model_size=variant, use_conv_last=True, use_pooling=True)
     else:
         logging.info('arch not supported.')
         sys.exit(-1)

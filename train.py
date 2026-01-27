@@ -6,7 +6,8 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import os
 from preprocess.dataset import FAS_CE_Dataset
-from models.utils import get_model, load_pretrain, get_argparse
+from models.utils import get_model, load_pretrain
+from utils.utils import get_argparse
 from losses.focal_loss import FocalLoss
 from losses.single_center_loss import SingleCenterLoss
 from preprocess import transformsv2 as Tv2
