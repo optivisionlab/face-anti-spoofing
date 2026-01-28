@@ -6,7 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import argparse
 import os
-from preprocess.dataset import FAS_CE_Dataset
+from preprocess.dataset import FAS_CE_Dataset_v2
 from models.utils import get_model, load_pretrain
 from losses.focal_loss import FocalLoss
 from losses.single_center_loss import SingleCenterLoss
@@ -70,11 +70,13 @@ def train(args):
     os.makedirs(os.path.join(save_path, "logs"), exist_ok=True)
     os.makedirs(os.path.join(save_path, "weights"), exist_ok=True)
 
-    last_checkpoint_path = os.path.join(save_path, "weights", "last_dc_cdn_checkpoint.pt")
-    best_checkpoint_path = os.path.join(save_path, "weights", "best_dc_cdn_classifier.pt")
+    last_checkpoint_path = os.path.join(save_path, "weights", f"last_{args.arch}_checkpoint.pt")
+    best_checkpoint_path = os.path.join(save_path, "weights", f"best_{args.arch}_classifier.pt")
 
     # --- Device ---
     device = torch.device(f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu")
+    
+    print("device : ", device)
 
     # --- Dataset ---
     train_transform = Tv2.Compose([
@@ -99,19 +101,18 @@ def train(args):
         ),
     ])
 
-    train_df = pd.read_csv(args.train_csv, usecols=['path', 'label'])
-    val_df = pd.read_csv(args.val_csv, usecols=['path', 'label'])
+    train_df = pd.read_csv(args.train_csv, usecols=['path', 'is_spoof'])
+    val_df = pd.read_csv(args.val_csv, usecols=['path', 'is_spoof'])
 
-    train_dataset = FAS_CE_Dataset(dataframe=train_df, base_dir=args.root_dir, transform=train_transform, 
-                                   is_train=True, random_frame=args.random_frame, tf_ratio=args.tf_ratio, aug_spoof=args.aug_spoof)
+    train_dataset = FAS_CE_Dataset_v2(dataframe=train_df, base_dir=args.root_dir, transform=train_transform, 
+                                      is_train=True, random_frame=args.random_frame, tf_ratio=args.tf_ratio, aug_spoof=args.aug_spoof)
     
-    val_dataset = FAS_CE_Dataset(dataframe=val_df, base_dir=args.root_dir, transform=test_transform, 
-                                 is_train=False, random_frame=args.random_frame, tf_ratio=args.tf_ratio, aug_spoof=args.aug_spoof)
+    val_dataset = FAS_CE_Dataset_v2(dataframe=val_df, base_dir=args.root_dir, transform=test_transform, 
+                                    is_train=False, random_frame=args.random_frame, tf_ratio=args.tf_ratio, aug_spoof=args.aug_spoof)
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
 
-    
     args.warmup_steps = len(train_loader) * args.warmup_epochs
     args.total_steps = len(train_loader) * args.num_epochs
     
@@ -135,7 +136,7 @@ def train(args):
     
     # --- Loss & Optimizer ---
     weights = torch.tensor([args.live_weight, 1.0])
-    criterion_scloss = SingleCenterLoss(m=0.3, D=feats.shape[1], use_gpu=True) # logger.info(f'Create single center loss, features dim: {D}')
+    criterion_scloss = SingleCenterLoss(m=0.3, D=feats.shape[1], use_gpu=True, device=device) # logger.info(f'Create single center loss, features dim: {D}')
     # criterion_fcloss = FocalLoss(gamma=2, alpha=0.2, task_type='multi-class', num_classes=args.num_classes)
     criterion_celoss = nn.CrossEntropyLoss(weight=weights).cuda(device)
     
@@ -163,16 +164,16 @@ def train(args):
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         # scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         start_epoch = checkpoint["epoch"] + 1
-        best_val_acc = checkpoint["best_val_acc"]
+        best_val_cer = checkpoint["best_val_cer"]
         epochs_no_improve = checkpoint["epochs_no_improve"]
-        print(f"🔄 Resumed from epoch {checkpoint['epoch']} with val acc {best_val_acc:.2f}%")
+        print(f"🔄 Resumed from epoch {checkpoint['epoch']} with val acc {best_val_cer:.2f}%")
 
 
     # --- TensorBoard ---
     writer = SummaryWriter(log_dir=os.path.join(save_path, "logs"))
 
     # --- EarlyStopping ---
-    best_val_acc = 0.0
+    best_val_cer = 1.0
     epochs_no_improve = 0
     early_stop = False
 
@@ -265,14 +266,14 @@ def train(args):
             f"Val Loss: {avg_val_loss:.4f} \tVal Acc: {val_acc:.4f} \tVal ACER: {val_acer:.4f}")
 
         # === Save best model ===
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
+        if val_acer < best_val_cer:
+            best_val_cer = val_acer
             epochs_no_improve = 0
             torch.save(model.state_dict(), best_checkpoint_path)
-            print(f"✅ Best model saved (Val Acc: {val_acc:.4f})")
+            print(f"✅ Best model saved (Val CER: {best_val_cer:.4f}) \t path save: {best_checkpoint_path}")
         else:
             epochs_no_improve += 1
-            print(f"⏳ No improvement ({epochs_no_improve}/{args.patience})")
+            print(f"⏳ best Val: {best_val_cer} - No improvement ({epochs_no_improve}/{args.patience})")
             if epochs_no_improve >= args.patience:
                 early_stop = True
                 print("⛔ Early stopping reached patience.")
@@ -282,11 +283,11 @@ def train(args):
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             # 'scheduler_state_dict': scheduler.state_dict(),
-            'best_val_acc': best_val_acc,
+            'best_val_cer': best_val_cer,
             'epochs_no_improve': epochs_no_improve,
             'lr': lr
         }, last_checkpoint_path)
-        print("💾 Last checkpoint saved.")
+        print(f"💾 Last checkpoint saved {last_checkpoint_path}")
         
         # ✅ Cập nhật learning rate sau mỗi epoch
         # current_lr = scheduler.get_last_lr()[0]
