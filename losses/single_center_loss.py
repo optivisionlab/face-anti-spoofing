@@ -13,7 +13,7 @@ class SingleCenterLoss(nn.Module):
         D (int): feature dimension.
         C (vector): learnable center.
     """
-    def __init__(self, m = 0.3, D = 1000, use_gpu=True):
+    def __init__(self, m = 0.3, D = 1000, use_gpu=True, device='cuda:0'):
         super(SingleCenterLoss, self).__init__()
         self.m = m
         self.D = D
@@ -22,7 +22,7 @@ class SingleCenterLoss(nn.Module):
         self.l2loss = nn.MSELoss(reduction = 'none')
 
         if self.use_gpu:
-            self.C = nn.Parameter(torch.randn(self.D).cuda())
+            self.C = nn.Parameter(torch.randn(self.D).cuda(device))
         else:
             self.C = nn.Parameter(torch.randn(self.D))
 
